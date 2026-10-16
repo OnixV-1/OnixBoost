@@ -1,0 +1,17 @@
+--filter-udp=443
+--hostlist=%ROOT%lists\list-google.txt
+--hostlist-exclude=%ROOT%lists\list-exclude.txt
+--hostlist-exclude=%ROOT%lists\list-exclude-user.txt
+--ipset-exclude=%ROOT%lists\ipset-exclude.txt
+--ipset-exclude=%ROOT%lists\ipset-exclude-user.txt
+--dpi-desync=fake
+--dpi-desync-repeats=6
+--dpi-desync-fake-quic=%VBIN%quic_initial_www_google_com.bin
+--new
+--filter-tcp=443
+--hostlist-domains=googlevideo.com,redirector.googlevideo.com
+--ip-id=zero
+--dpi-desync=hostfakesplit
+--dpi-desync-fooling=ts
+--dpi-desync-hostfakesplit-mod=host=www.google.com
+--dpi-desync-repeats=4

@@ -1,0 +1,186 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="OnixBoost.MainWindow"
+        Title="OnixBoost"
+        Width="920" Height="470"
+        MinWidth="780" MinHeight="420"
+        WindowStartupLocation="CenterScreen"
+        Background="#0B0D12"
+        Icon="/Assets/onixboost-tray.png"
+        ExtendClientAreaToDecorationsHint="False">
+
+  <Window.Styles>
+    <Style Selector="Button.cardHit">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Padding" Value="10,18"/>
+      <Setter Property="HorizontalAlignment" Value="Stretch"/>
+      <Setter Property="VerticalAlignment" Value="Stretch"/>
+      <Setter Property="HorizontalContentAlignment" Value="Center"/>
+      <Setter Property="VerticalContentAlignment" Value="Center"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style Selector="Button.cardHit:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="Transparent"/>
+    </Style>
+    <Style Selector="Button.cardHit:pressed /template/ ContentPresenter">
+      <Setter Property="Background" Value="Transparent"/>
+    </Style>
+    <Style Selector="Button.cardHit:disabled /template/ ContentPresenter">
+      <Setter Property="Background" Value="Transparent"/>
+    </Style>
+    <Style Selector="Button.promoHit">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="HorizontalAlignment" Value="Stretch"/>
+      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style Selector="Button.promoHit:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Opacity" Value="0.92"/>
+    </Style>
+    <Style Selector="Button.promoHit:pressed /template/ ContentPresenter">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Opacity" Value="0.85"/>
+    </Style>
+    <Style Selector="Border.svcCard">
+      <Setter Property="CornerRadius" Value="22"/>
+      <Setter Property="MinWidth" Value="140"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="ClipToBounds" Value="True"/>
+    </Style>
+    <Style Selector="Path.cardSpin">
+      <Setter Property="Width" Value="28"/>
+      <Setter Property="Height" Value="28"/>
+      <Setter Property="Stretch" Value="Uniform"/>
+      <Setter Property="Stroke" Value="White"/>
+      <Setter Property="StrokeThickness" Value="3.5"/>
+      <Setter Property="StrokeLineCap" Value="Round"/>
+      <Setter Property="Fill" Value="Transparent"/>
+      <Setter Property="IsVisible" Value="False"/>
+      <Setter Property="HorizontalAlignment" Value="Center"/>
+      <Setter Property="RenderTransformOrigin" Value="50%,50%"/>
+      <Setter Property="Data" Value="M 14,2.5 A 11.5,11.5 0 1 1 2.5,14"/>
+      <Setter Property="RenderTransform">
+        <RotateTransform Angle="0"/>
+      </Setter>
+      <Style.Animations>
+        <Animation Duration="0:0:0.85" IterationCount="Infinite">
+          <KeyFrame Cue="0%">
+            <Setter Property="RotateTransform.Angle" Value="0"/>
+          </KeyFrame>
+          <KeyFrame Cue="100%">
+            <Setter Property="RotateTransform.Angle" Value="360"/>
+          </KeyFrame>
+        </Animation>
+      </Style.Animations>
+    </Style>
+  </Window.Styles>
+
+  <DockPanel Margin="16">
+    <Border DockPanel.Dock="Top" Background="#12151E" CornerRadius="14" Padding="14,10" Margin="0,0,0,14">
+      <Grid ColumnDefinitions="Auto,*,Auto">
+        <Image Source="/Assets/onixboost.png" Width="36" Height="36" Margin="0,0,12,0"
+               Stretch="Uniform" RenderOptions.BitmapInterpolationMode="HighQuality"/>
+        <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal" Spacing="12">
+          <TextBlock Text="OnixBoost" FontSize="20" FontWeight="Bold" Foreground="#4DA3FF" VerticalAlignment="Center"/>
+          <TextBlock x:Name="VersionText" Text="" Foreground="#5A6478" FontSize="12" VerticalAlignment="Center"/>
+          <TextBlock x:Name="StatusText" Text="Готов" Foreground="#7A8498" FontSize="13" VerticalAlignment="Center"/>
+        </StackPanel>
+        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+          <Button x:Name="UpdateBtn" Content="Обновить" Click="OnUpdate"
+                  IsVisible="False"
+                  Background="#2563EB" Foreground="White" Padding="16,8" CornerRadius="10"
+                  FontWeight="SemiBold" HorizontalContentAlignment="Center"/>
+          <Button x:Name="StopBtn" Content="STOP" Click="OnStop"
+                  Background="#E5484D" Foreground="White" Padding="20,8" CornerRadius="10"
+                  FontWeight="SemiBold" HorizontalContentAlignment="Center"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- OnixV promo → Telegram bot (dark/blue mark) -->
+    <Border DockPanel.Dock="Bottom" Margin="0,14,0,0" CornerRadius="16" ClipToBounds="True"
+            Background="#12151E" BorderBrush="#1E3A5F" BorderThickness="1">
+      <Button Classes="promoHit" Click="OnOpenOnixV">
+        <Grid ColumnDefinitions="Auto,*,Auto" Margin="18,14">
+          <Image Source="/Assets/onixv.png" Width="40" Height="40"
+                 VerticalAlignment="Center" Margin="0,0,14,0" Stretch="Uniform"
+                 RenderOptions.BitmapInterpolationMode="HighQuality"/>
+          <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="OnixV" FontSize="16" FontWeight="Bold" Foreground="#E8EEF8"
+                         VerticalAlignment="Center"/>
+              <Border Background="#1E3A5F" CornerRadius="6" Padding="8,2" VerticalAlignment="Center">
+                <TextBlock Text="VPN" FontSize="10" FontWeight="SemiBold" Foreground="#7DB7FF"/>
+              </Border>
+            </StackPanel>
+            <TextBlock Text="Нужен доступ ко всему интернету? Подключайся в Telegram — быстро и просто."
+                       FontSize="12.5" Foreground="#8B95A8" TextWrapping="Wrap"/>
+          </StackPanel>
+          <Border Grid.Column="2" Background="#2563EB" CornerRadius="10" Padding="22,10"
+                  VerticalAlignment="Center" Margin="16,0,0,0" MinWidth="110">
+            <TextBlock Text="Открыть" FontSize="13" FontWeight="SemiBold"
+                       Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          </Border>
+        </Grid>
+      </Button>
+    </Border>
+
+    <Grid ColumnDefinitions="*,*,*,*">
+      <Border x:Name="CardDiscord" Grid.Column="0" Classes="svcCard" Background="#5865F2" Margin="0,0,6,0">
+        <Button Classes="cardHit" Click="OnBoostDiscord">
+          <StackPanel Spacing="14" HorizontalAlignment="Center">
+            <Image Source="/Assets/icon-discord.png" Width="56" Height="56" HorizontalAlignment="Center" Stretch="Uniform"/>
+            <TextBlock Text="Discord" FontSize="16" FontWeight="Bold" Foreground="White"
+                       HorizontalAlignment="Center" TextAlignment="Center"/>
+            <Path x:Name="SpinDiscord" Classes="cardSpin"/>
+            <TextBlock x:Name="LabelDiscord" Text="" FontSize="11" FontWeight="SemiBold"
+                       Foreground="#FFFFFFCC" HorizontalAlignment="Center" TextAlignment="Center"/>
+          </StackPanel>
+        </Button>
+      </Border>
+
+      <Border x:Name="CardYoutube" Grid.Column="1" Classes="svcCard" Background="#FF0000" Margin="3,0">
+        <Button Classes="cardHit" Click="OnBoostYoutube">
+          <StackPanel Spacing="14" HorizontalAlignment="Center">
+            <Image Source="/Assets/icon-youtube.png" Width="56" Height="56" HorizontalAlignment="Center" Stretch="Uniform"/>
+            <TextBlock Text="YouTube" FontSize="16" FontWeight="Bold" Foreground="White"
+                       HorizontalAlignment="Center" TextAlignment="Center"/>
+            <Path x:Name="SpinYoutube" Classes="cardSpin"/>
+            <TextBlock x:Name="LabelYoutube" Text="" FontSize="11" FontWeight="SemiBold"
+                       Foreground="#FFFFFFCC" HorizontalAlignment="Center" TextAlignment="Center"/>
+          </StackPanel>
+        </Button>
+      </Border>
+
+      <Border x:Name="CardSteam" Grid.Column="2" Classes="svcCard" Background="#171A21" Margin="3,0">
+        <Button Classes="cardHit" Click="OnBoostSteam">
+          <StackPanel Spacing="14" HorizontalAlignment="Center">
+            <Image Source="/Assets/icon-steam.png" Width="56" Height="56" HorizontalAlignment="Center" Stretch="Uniform"/>
+            <TextBlock Text="Games" FontSize="16" FontWeight="Bold" Foreground="White"
+                       HorizontalAlignment="Center" TextAlignment="Center"/>
+            <Path x:Name="SpinSteam" Classes="cardSpin"/>
+            <TextBlock x:Name="LabelSteam" Text="" FontSize="11" FontWeight="SemiBold"
+                       Foreground="#FFFFFFCC" HorizontalAlignment="Center" TextAlignment="Center"/>
+          </StackPanel>
+        </Button>
+      </Border>
+
+      <Border x:Name="CardTelegram" Grid.Column="3" Classes="svcCard" Background="#229ED9" Margin="6,0,0,0">
+        <Button Classes="cardHit" Click="OnBoostTelegram">
+          <StackPanel Spacing="14" HorizontalAlignment="Center">
+            <Image Source="/Assets/icon-telegram.png" Width="56" Height="56" HorizontalAlignment="Center" Stretch="Uniform"/>
+            <TextBlock Text="Telegram" FontSize="16" FontWeight="Bold" Foreground="White"
+                       HorizontalAlignment="Center" TextAlignment="Center"/>
+            <Path x:Name="SpinTelegram" Classes="cardSpin"/>
+            <TextBlock x:Name="LabelTelegram" Text="" FontSize="11" FontWeight="SemiBold"
+                       Foreground="#FFFFFFCC" HorizontalAlignment="Center" TextAlignment="Center"/>
+          </StackPanel>
+        </Button>
+      </Border>
+    </Grid>
+  </DockPanel>
+</Window>

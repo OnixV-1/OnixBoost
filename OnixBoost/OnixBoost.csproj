@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>OnixBoost</AssemblyName>
+    <RootNamespace>OnixBoost</RootNamespace>
+    <Version>2.8.79</Version>
+    <ApplicationIcon>Assets\onixboost.ico</ApplicationIcon>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.2.5" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.2.5" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.5" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.2.5" />
+    <PackageReference Include="Divert.Windows" Version="3.0.0" />
+    <PackageReference Include="Native.WinDivert" Version="2.2.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\**" />
+    <!-- Tunnel JSON embedded — not shipped as readable dpi/tunnel/*.json -->
+    <EmbeddedResource Include="dpi\core\client.json" LogicalName="OnixBoost.Tunnel.client.json" />
+    <EmbeddedResource Include="dpi\core\client-telegram.json" LogicalName="OnixBoost.Tunnel.client-telegram.json" />
+    <EmbeddedResource Include="dpi\core\client-games.json" LogicalName="OnixBoost.Tunnel.client-games.json" />
+    <EmbeddedResource Include="dpi\core\client-youtube.json" LogicalName="OnixBoost.Tunnel.client-youtube.json" />
+    <!-- Explicit Include: SDK skips loose .exe/.dll under Update-only globs on publish -->
+    <None Include="dpi\**\*" Exclude="dpi\**\*.backup;dpi\core\client.json;dpi\core\client-telegram.json;dpi\core\client-games.json;dpi\core\client-youtube.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </None>
+  </ItemGroup>
+
+  <Target Name="CopyDpiToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <_DpiFiles Include="$(MSBuildProjectDirectory)\dpi\**\*"
+                 Exclude="$(MSBuildProjectDirectory)\dpi\**\*.backup;$(MSBuildProjectDirectory)\dpi\core\client.json;$(MSBuildProjectDirectory)\dpi\core\client-telegram.json;$(MSBuildProjectDirectory)\dpi\core\client-games.json;$(MSBuildProjectDirectory)\dpi\core\client-youtube.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_DpiFiles)"
+          DestinationFiles="@(_DpiFiles->'$(PublishDir)dpi\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="false" />
+  </Target>
+</Project>

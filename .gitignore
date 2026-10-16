@@ -1,0 +1,12 @@
+**/bin/
+**/obj/
+**/publish/
+**/*.user
+**/.vs/
+**/payload.zip
+OnixBoost/dpi/core/.rt/
+OnixBoost/dpi/bin/
+OnixBoost/dpi/stack/
+*.exe
+*.dll
+!OnixBoost/Assets/**
