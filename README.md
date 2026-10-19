@@ -185,16 +185,15 @@ dotnet publish OnixBoost/OnixBoost.csproj -c Release -r win-x64 --self-contained
 
 ## Лицензия и участие
 
-OnixBoost распространяется по проприетарной **source-available** лицензии. Полный текст — в [LICENSE](LICENSE).
+OnixBoost распространяется по проприетарной **source-available** лицензии.  
+Полные условия — в [LICENSE](LICENSE).
 
-- Разрешено личное использование официальных сборок.
-- Разрешено изучение публичного исходного кода.
-- Разрешено отправлять изменения через Pull Request.
-- Разрешено распространять только неизменённые официальные установщики.
-- Запрещено распространять изменённые, пересобранные или неполные версии.
+- Можно использовать официальные сборки для личных целей.
+- Можно изучать публичный исходный код и отправлять Pull Request.
+- Нельзя распространять изменённые, пересобранные или неполные версии.
 - Серверные endpoint’ы, ключи и runtime-конфигурации не входят в публичную лицензию.
 
-Баги и идеи — в [Issues](https://github.com/OnixV-1/OnixBoost/issues).  
-Правила участия — в [CONTRIBUTING.md](CONTRIBUTING.md).  
-Уязвимости — в [SECURITY.md](SECURITY.md).  
-Связь с автором — [Telegram OnixV](https://t.me/Onix_Vbot).
+Баги и идеи — [Issues](https://github.com/OnixV-1/OnixBoost/issues) ·  
+Участие — [CONTRIBUTING.md](CONTRIBUTING.md) ·  
+Уязвимости — [SECURITY.md](SECURITY.md) ·  
+Автор — [Telegram OnixV](https://t.me/Onix_Vbot).
