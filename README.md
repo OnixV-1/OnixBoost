@@ -29,9 +29,7 @@
   <a href="https://github.com/OnixV-1/OnixBoost/releases/latest/download/OnixBoost-Setup.exe"><img alt="Скачать" src="https://img.shields.io/badge/%D0%A1%D0%BA%D0%B0%D1%87%D0%B0%D1%82%D1%8C%20Setup.exe-2563EB?style=for-the-badge&logo=github&logoColor=white"></a>
 </p>
 
-<div align="center">
-  <img src="assets/demo.gif" width="720" alt="OnixBoost: включение профилей Discord, YouTube, Twitch и Telegram">
-</div>
+<img src="assets/app-ui-285.png" width="880" alt="OnixBoost — Discord, YouTube, Twitch, Telegram">
 
 </div>
 
@@ -65,10 +63,6 @@
 | **Telegram** | Десктопный и веб-Telegram |
 
 Несколько карточек можно держать включёнными сразу. **STOP** снимает все активные правила. Обновления — кнопкой **Обновить** в приложении.
-
-<div align="center">
-  <img src="assets/app-ui-285.png" width="880" alt="OnixBoost — четыре карточки сервисов"/>
-</div>
 
 ---
 
@@ -181,7 +175,7 @@ dotnet publish OnixBoost/OnixBoost.csproj -c Release -r win-x64 --self-contained
 |--------------|------------|
 | `OnixBoost/` | Приложение |
 | `OnixBoost.Setup/` | Установщик |
-| `assets/` | Логотипы, скриншот и демо |
+| `assets/` | Логотипы и скриншот |
 | `LICENSE` | Условия использования |
 | `THIRD-PARTY-NOTICES.md` | Сторонние компоненты |
 | `SECURITY.md` | Сообщения об уязвимостях |
