@@ -195,4 +195,3 @@ OnixBoost распространяется по проприетарной **sou
 
 Баги и идеи — [Issues](https://github.com/OnixV-1/OnixBoost/issues) ·  
 Уязвимости — [SECURITY.md](SECURITY.md) ·  
-Автор — [Telegram OnixV](https://t.me/Onix_Vbot).
