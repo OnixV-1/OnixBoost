@@ -122,12 +122,12 @@ Get-FileHash .\OnixBoost-Setup.exe -Algorithm SHA256
 | Назначение | Источник |
 |------------|----------|
 | Проверка обновлений | GitHub Releases этого репозитория |
-| Списки IP Discord | публичный [amnezia-discord-config](https://github.com/iamkuper/amnezia-discord-config) на GitHub |
-| Профили правил winws | публичные [релизы Flowseal](https://github.com/Flowseal/zapret-discord-youtube) на GitHub |
+| Списки IP Discord | публичные списки конфигурации Discord (см. [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)) |
+| Профили правил winws | профили, поставляемые с приложением и обновляемые вместе с ним |
 | Проверка статуса Online | прямые запросы к публичным endpoint’ам выбранного сервиса; без учётных данных и без отправки через серверы OnixBoost |
 
-Списки IP и профили правил загружаются из указанных публичных источников.  
-Контроль целостности загружаемых файлов и фиксация версий находятся в разработке.
+Списки и профили обновляются вместе с релизом OnixBoost.  
+Сторонние компоненты и лицензии — в [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 Уязвимости — через [SECURITY.md](SECURITY.md), не через публичные Issues.
 

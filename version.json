@@ -2,5 +2,5 @@
   "version": "2.9.0",
   "url": "https://github.com/OnixV-1/OnixBoost/releases/latest/download/OnixBoost-Setup.exe",
   "zip": "https://github.com/OnixV-1/OnixBoost/releases/latest/download/OnixBoost-Update.zip",
-  "notes": "OnixBoost 2.9.0\n\nDiscord Soft = ванильный Flowseal zapret-discord-youtube 1.10.3 с GitHub (без наших правок DPI).\n\n• Discord — стратегии/lists/bin из релиза 1.10.3 как в service.bat\n• Discord — подбор с SIMPLE FAKE (как Run Tests у Flowseal)\n• Discord — старая сохранённая стратегия сбрасывается\n• YouTube / Twitch / Telegram — без изменений\n\nОбновление: STOP → Обновить → Soft Discord → дождитесь подбора → запустите Discord."
+  "notes": "OnixBoost 2.9.0\n\nDiscord Soft: стабильный запуск и подключение без лишних правок профиля.\n\n• Discord Soft — автоподбор рабочей стратегии\n• Discord Soft — сброс устаревшей сохранённой стратегии\n• YouTube / Twitch / Telegram — без изменений\n\nОбновление: STOP → Обновить → Soft Discord → дождитесь подбора → Discord."
 }
