@@ -18,14 +18,12 @@ modified or incomplete builds is not permitted.
    - credit the author (OnixV / OnixBoost);
    - include a link to https://github.com/OnixV-1/OnixBoost.
 
-3. SOURCE CODE, STUDY, AND CONTRIBUTIONS
+3. SOURCE CODE AND STUDY
    Source code in this repository is made available for inspection and local
    study. You may build the client for personal use on your own machines.
-   You may submit Pull Requests to https://github.com/OnixV-1/OnixBoost.
-   By submitting a Pull Request, you agree to assign copyright in your
-   contribution to the project owner, or grant an irrevocable, perpetual,
-   worldwide, royalty-free license to use, modify, and distribute that
-   contribution as part of OnixBoost under this license.
+   External Pull Requests are not invited by default. Any contribution accepted
+   by the project owner is subject to separate written agreement, including
+   copyright assignment or an irrevocable license to OnixBoost.
    You may not publish public forks meant for redistribution, modified builds,
    incomplete packages, or rebranded redistributions without prior written
    permission.
