@@ -1,13 +1,43 @@
+OnixBoost Proprietary Source-Available License
 Copyright (c) 2026 OnixV / OnixBoost
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of the OnixBoost installer and documentation to use the software for personal
-purposes, subject to the following conditions:
+SUMMARY
+-------
+This is a proprietary, source-available license. The public repository may
+include client and installer source for review. Official binaries are provided
+for personal use. Modified or incomplete redistributions are not permitted.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+1. PERSONAL USE OF OFFICIAL BUILDS
+   You may download and use official OnixBoost builds (including Setup.exe
+   published on the OnixV-1/OnixBoost GitHub Releases page) for personal use.
 
-You may redistribute the official installer unchanged.
-Source code and server credentials are not licensed for republication unless
-explicitly stated in a future release.
+2. REDISTRIBUTION OF OFFICIAL INSTALLERS
+   You may redistribute unmodified official installers only, provided you:
+   - keep the software unchanged;
+   - credit the author (OnixV / OnixBoost);
+   - include a link to https://github.com/OnixV-1/OnixBoost.
+
+3. SOURCE CODE
+   Source code in this repository is made available for inspection and local
+   study. You may build the client for personal use on your own machines.
+   You may not publish forks, modified builds, incomplete packages, or
+   rebranded redistributions of the software without prior written permission.
+
+4. EXCLUDED MATERIALS
+   Server endpoints, access keys, credentials, and private runtime
+   configurations are NOT licensed under this document and are not part of
+   the public grant. They must not be extracted, republished, or redistributed.
+
+5. THIRD-PARTY COMPONENTS
+   Bundled third-party libraries (including WinDivert) remain under their
+   own licenses. See THIRD-PARTY-NOTICES.md.
+
+6. NO WARRANTY
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+   THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY ARISING FROM USE OF THE SOFTWARE.
+
+7. CONTACT
+   Licensing questions: https://t.me/Onix_Vbot
