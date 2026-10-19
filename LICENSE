@@ -3,9 +3,10 @@ Copyright (c) 2026 OnixV / OnixBoost
 
 SUMMARY
 -------
-This is a proprietary, source-available license. The public repository may
-include client and installer source for review. Official binaries are provided
-for personal use. Modified or incomplete redistributions are not permitted.
+This is a proprietary, source-available license. The public repository includes
+client and installer source for inspection and contribution via Pull Request.
+Official binaries are provided for personal use. Public redistribution of
+modified or incomplete builds is not permitted.
 
 1. PERSONAL USE OF OFFICIAL BUILDS
    You may download and use official OnixBoost builds (including Setup.exe
@@ -17,11 +18,17 @@ for personal use. Modified or incomplete redistributions are not permitted.
    - credit the author (OnixV / OnixBoost);
    - include a link to https://github.com/OnixV-1/OnixBoost.
 
-3. SOURCE CODE
+3. SOURCE CODE, STUDY, AND CONTRIBUTIONS
    Source code in this repository is made available for inspection and local
    study. You may build the client for personal use on your own machines.
-   You may not publish forks, modified builds, incomplete packages, or
-   rebranded redistributions of the software without prior written permission.
+   You may submit Pull Requests to https://github.com/OnixV-1/OnixBoost.
+   By submitting a Pull Request, you agree to assign copyright in your
+   contribution to the project owner, or grant an irrevocable, perpetual,
+   worldwide, royalty-free license to use, modify, and distribute that
+   contribution as part of OnixBoost under this license.
+   You may not publish public forks meant for redistribution, modified builds,
+   incomplete packages, or rebranded redistributions without prior written
+   permission.
 
 4. EXCLUDED MATERIALS
    Server endpoints, access keys, credentials, and private runtime
