@@ -10,10 +10,8 @@ using OnixBoost.Engine;
 namespace OnixBoost.Services;
 
 /// <summary>
-/// One winws process for Discord and/or Games (never two — overlapping --wf-tcp=443).
-/// Games solo = games_main on the primary slot (Steam passthrough). Discord = Flowseal ± Games appends.
-/// Cards stay independent in the UI; under the hood they share one stack so order does not matter.
-/// Native FakeSplit divert is NOT used for Games — it breaks Steam CM (error -100).
+/// Discord = Flowseal on WinwsSlot.Discord. Media (YouTube/Twitch) = shared winws on
+/// WinwsSlot.Games — never merge Media into Discord. Telegram = HY2 (TunnelEngine).
 /// </summary>
 public sealed class StrategyAutoPicker
 {
@@ -69,8 +67,7 @@ public sealed class StrategyAutoPicker
     {
         BoostTarget.Discord => "Discord",
         BoostTarget.Youtube => "YouTube",
-        BoostTarget.Steam => "Games",
-        BoostTarget.DiscordSteam => "Discord+Games",
+        BoostTarget.Twitch => "Twitch",
         BoostTarget.Telegram => "Telegram",
         _ => t.ToString()
     };
@@ -100,40 +97,74 @@ public sealed class StrategyAutoPicker
 
     public string[] BuildAppends(BoostTarget target, bool withTelegram = false)
     {
-        var games = target is BoostTarget.Steam or BoostTarget.DiscordSteam;
         var youtube = target is BoostTarget.Youtube;
-        var withDiscord = target is BoostTarget.Discord or BoostTarget.DiscordSteam;
-        return BuildAppends(games, youtube, withDiscord, withTelegram);
+        var withDiscord = target is BoostTarget.Discord;
+        return BuildAppends(games: false, youtube, withDiscord, withTelegram);
     }
 
-    /// <summary>Discord = solo Flowseal winws. Games is HY2 — never merge/stop Games here.</summary>
+    /// <summary>Discord = solo Flowseal winws. Never merge Media (YT/Twitch) into Discord.</summary>
     public async Task StartDiscordAsync(string argsFile, bool gamesAlsoOn)
     {
-        _ = gamesAlsoOn; // ignored — Games card owns HY2 TUN, not winws appends
+        _ = gamesAlsoOn; // ignored — Media owns Games slot; Discord stays solo
         _discordArgsFile = argsFile;
         await _discord.StartAsync(
             argsFile,
             autoHostList: false,
-            discordStreamSafe: true,
+            discordStreamSafe: true, // identity — vanilla Flowseal args
             preserveYoutubeQuic: false,
             exclusiveWf: null);
-        Logger.Info("Discord winws up (solo Flowseal; Games untouched)");
+        Logger.Info("Discord winws up (vanilla Flowseal " + argsFile + "; Media untouched)");
     }
 
     /// <summary>
-    /// Games = games_main (launchers) on the primary winws slot. Steam is never desynced —
-    /// steam_main multisplit breaks the Chromium storefront. Discord merge = same process.
+    /// Media DPI on Games slot: YouTube and/or Twitch hostlists. Both OFF → stop Media.
+    /// Does not touch Discord winws.
     /// </summary>
-    /// <summary>
-    /// Legacy winws Games path — disabled. Soft Games card uses HY2 TUN (TunnelEngine).
-    /// Kept so old call sites only clear leftovers and never require Discord first.
-    /// </summary>
+    public async Task StartMediaAsync(bool youtube, bool twitch)
+    {
+        try { await _gamesDivert.StopAsync(); } catch { }
+
+        if (!youtube && !twitch)
+        {
+            try { await _games.StopAsync(killAllWinws: false); } catch { }
+            Logger.Info("Media DPI stopped (YT/Twitch off)");
+            return;
+        }
+
+        if (youtube && twitch)
+        {
+            await _games.StartAsync(
+                "youtube_main.txt",
+                autoHostList: false,
+                discordStreamSafe: false,
+                preserveYoutubeQuic: true,
+                exclusiveWf: null,
+                "twitch_main.txt");
+        }
+        else if (youtube)
+        {
+            await _games.StartAsync(
+                "youtube_main.txt",
+                autoHostList: false,
+                discordStreamSafe: false,
+                preserveYoutubeQuic: true);
+        }
+        else
+        {
+            await _games.StartAsync(
+                "twitch_main.txt",
+                autoHostList: false,
+                discordStreamSafe: false);
+        }
+
+        Logger.Info($"Media DPI up yt={youtube} tw={twitch}");
+    }
+
+    /// <summary>Legacy name — clears Media leftovers only.</summary>
     public async Task StartGamesAsync(bool discordAlsoOn)
     {
         _ = discordAlsoOn;
-        try { await _gamesDivert.StopAsync(); } catch { }
-        try { await _games.StopAsync(killAllWinws: false); } catch { }
-        Logger.Info("StartGamesAsync: no-op (Games is HY2, not winws; Discord untouched)");
+        await StartMediaAsync(youtube: false, twitch: false);
     }
 
     public async Task StartKnownAsync(string argsFile, bool games, bool youtube, bool withDiscord = false, bool withTelegram = false)
@@ -149,9 +180,9 @@ public sealed class StrategyAutoPicker
     public async Task StartKnownAsync(string argsFile, BoostTarget target, bool withTelegram)
     {
         await StartKnownAsync(argsFile,
-            games: target is BoostTarget.Steam or BoostTarget.DiscordSteam,
+            games: false,
             youtube: target is BoostTarget.Youtube,
-            withDiscord: target is BoostTarget.Discord or BoostTarget.DiscordSteam,
+            withDiscord: target is BoostTarget.Discord,
             withTelegram: withTelegram || target is BoostTarget.Telegram);
     }
 
@@ -162,17 +193,12 @@ public sealed class StrategyAutoPicker
 
     public async Task StopDiscordAsync() => await _discord.StopAsync(killAllWinws: false);
 
-    /// <summary>
-    /// Games is HY2-only now — clear leftover Games DPI/divert only.
-    /// Never start/stop Discord winws from the Games path (cards are independent).
-    /// </summary>
+    /// <summary>Stop Media (Games slot) only — never touches Discord.</summary>
     /// <param name="discordStillOn">Ignored (kept for call-site compatibility).</param>
     public async Task StopGamesAsync(bool discordStillOn = false)
     {
         _ = discordStillOn;
-        try { await _gamesDivert.StopAsync(); } catch { }
-        try { await _games.StopAsync(killAllWinws: false); } catch { }
-        // Do NOT touch _discord — Games no longer shares / merges into Discord winws.
+        await StartMediaAsync(youtube: false, twitch: false);
     }
 
     public async Task StopAllWinwsAsync()
@@ -267,7 +293,7 @@ public sealed class StrategyAutoPicker
         {
             await StartGamesAsync(discordAlsoOn);
             await Task.Delay(320, ct);
-            var h = await _health.CheckTargetAsync(BoostTarget.Steam, ct, fastFail: true);
+            var h = await _health.CheckTargetAsync(BoostTarget.Twitch, ct, fastFail: true);
             if (h.Ok)
             {
                 log($"OK: Games ({h.Ms} ms) — {h.Detail}");
@@ -299,25 +325,20 @@ public sealed class StrategyAutoPicker
         int maxStrategies = 8,
         Action<string>? status = null)
     {
-        if (healthTarget is BoostTarget.DiscordSteam)
-        {
-            games = true;
+        if (healthTarget is BoostTarget.Discord)
             withDiscord = true;
-        }
 
         if (withDiscord || healthTarget is BoostTarget.Discord)
         {
-            var discord = await FindWorkingDiscordAsync(log, ct, preferId, maxStrategies, status,
-                gamesAlsoOn: games);
-            if (discord.Id != null && games)
-            {
-                try { await StartGamesAsync(discordAlsoOn: true); }
-                catch (Exception ex) { log("Games merge after Discord: " + ex.Message); }
-            }
-            return discord;
+            return await FindWorkingDiscordAsync(log, ct, preferId, maxStrategies, status,
+                gamesAlsoOn: false);
         }
 
-        if (games || healthTarget is BoostTarget.Steam)
+        // Twitch Soft card is Media DPI — no Flowseal strategy sweep
+        if (healthTarget is BoostTarget.Twitch or BoostTarget.Youtube)
+            return (null, null, null);
+
+        if (games)
             return await FindWorkingGamesAsync(log, ct, discordAlsoOn: withDiscord, status);
 
         return (null, null, null);
@@ -355,8 +376,8 @@ public sealed class StrategyAutoPicker
         string? preferId,
         bool withTelegram) =>
         FindWorkingAsync(target, log, ct, preferId,
-            games: target is BoostTarget.Steam or BoostTarget.DiscordSteam,
+            games: false,
             youtube: target is BoostTarget.Youtube,
-            withDiscord: target is BoostTarget.Discord or BoostTarget.DiscordSteam,
+            withDiscord: target is BoostTarget.Discord,
             withTelegram: withTelegram);
 }

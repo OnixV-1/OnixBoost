@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -122,8 +123,8 @@ public sealed class BinaryUpdater
     }
 
     /// <summary>
-    /// Keep Twitch in hostlists and out of exclude after Flowseal sync overwrites lists/.
-    /// User file list-general-user.txt is preserved by CopyListsFromBinParentAsync.
+    /// Twitch is its own HY2 card — strip Twitch domains from Discord DPI hostlists
+    /// so winws does not fight the Twitch TUN. Discord Soft lists stay Flowseal-vanilla.
     /// </summary>
     public static void ApplyOnixListPatches()
     {
@@ -132,47 +133,40 @@ public sealed class BinaryUpdater
             var lists = AppPaths.ListsDir;
             Directory.CreateDirectory(lists);
 
-            var user = Path.Combine(lists, "list-general-user.txt");
-            var twitchBlock = """
-                # OnixBoost Twitch
-                twitchcdn.net
-                twitch.tv
-                ext-twitch.tv
-                assets.twitch.tv
-                live-video.net
-                gql.twitch.tv
-                jtvnw.net
-                ttvnw.net
-                cloudfront.net
-                gstatic.com
-                amazon-adsystem.com
-                scorecardresearch.com
-                """;
-            if (!File.Exists(user) || new FileInfo(user).Length < 20)
-                File.WriteAllText(user, twitchBlock.Replace("\n", Environment.NewLine));
-            else
+            var twitchNeedles = new[]
             {
-                var cur = File.ReadAllText(user);
-                if (!cur.Contains("twitch.tv", StringComparison.OrdinalIgnoreCase))
-                    File.AppendAllText(user, Environment.NewLine + twitchBlock.Replace("\n", Environment.NewLine));
+                "twitch", "twitchcdn", "ext-twitch", "live-video.net",
+                "jtvnw", "ttvnw", "ttcdn"
+            };
+
+            foreach (var name in new[] { "list-general-user.txt", "list-general.txt" })
+            {
+                var path = Path.Combine(lists, name);
+                if (!File.Exists(path)) continue;
+                var kept = File.ReadAllLines(path)
+                    .Where(l =>
+                    {
+                        var s = l.Trim();
+                        if (s.Length == 0 || s.StartsWith('#'))
+                            return !s.Contains("OnixBoost Twitch", StringComparison.OrdinalIgnoreCase);
+                        var low = s.ToLowerInvariant();
+                        return !twitchNeedles.Any(n => low.Contains(n, StringComparison.Ordinal));
+                    });
+                File.WriteAllLines(path, kept);
             }
 
             var exclude = Path.Combine(lists, "list-exclude.txt");
             if (File.Exists(exclude))
             {
-                var needles = new[]
-                {
-                    "twitch", "twitchcdn", "ext-twitch", "live-video.net",
-                    "jtvnw", "ttvnw", "amazon-adsystem", "scorecardresearch"
-                };
                 var kept = File.ReadAllLines(exclude)
                     .Where(l =>
                     {
                         var s = l.Trim();
                         if (s.Length == 0 || s.StartsWith('#')) return true;
                         var low = s.ToLowerInvariant();
-                        return !needles.Any(n => low.Contains(n, StringComparison.Ordinal));
-                    });
+                        return !twitchNeedles.Any(n => low.Contains(n, StringComparison.Ordinal));
+                    })
+                    .ToList();
                 File.WriteAllLines(exclude, kept);
             }
         }

@@ -187,8 +187,7 @@ public sealed class WinwsEngine
         if (discordStreamSafe)
         {
             args = SanitizeForDiscordStream(args, preserveYoutubeQuic);
-            Logger.Info("winws: Discord stream-safe sanitize" +
-                        (preserveYoutubeQuic ? " (keep YouTube QUIC)" : ""));
+            Logger.Info("winws: Discord Soft = vanilla Flowseal (no arg rewrite)");
         }
 
         // Steam CM uses TCP/UDP 27015–27050; appends strip --wf-* so expand base filter.
@@ -358,55 +357,14 @@ public sealed class WinwsEngine
         return args;
     }
 
+    /// <summary>
+    /// Discord Soft = vanilla Flowseal (latest zapret-discord-youtube), Game Filter disabled
+    /// (sentinel port 12 — same as Flowseal service.bat default). No OnixBoost TCP/QUIC rewrites.
+    /// </summary>
     public static List<string> SanitizeForDiscordStream(List<string> args, bool preserveYoutubeQuic = false)
     {
-        var blocks = SplitArgBlocks(args);
-        var kept = new List<List<string>>();
-        foreach (var block in blocks)
-        {
-            if (block.Count == 0) continue;
-
-            var dropIpsetQuic =
-                !preserveYoutubeQuic &&
-                block.Any(a => a.StartsWith("--filter-udp=443", StringComparison.OrdinalIgnoreCase)) &&
-                block.Any(a => a.StartsWith("--ipset=", StringComparison.OrdinalIgnoreCase) &&
-                               !a.StartsWith("--ipset-exclude", StringComparison.OrdinalIgnoreCase));
-
-            var drop =
-                block.Any(a => a.StartsWith("--filter-udp=12", StringComparison.OrdinalIgnoreCase)) ||
-                block.Any(a => a.StartsWith("--filter-tcp=12", StringComparison.OrdinalIgnoreCase)) ||
-                block.Any(a => a.Contains("ACTIVE_GAME_UDP", StringComparison.OrdinalIgnoreCase)) ||
-                block.Any(a => a.StartsWith("--dpi-desync-any-protocol", StringComparison.OrdinalIgnoreCase)) ||
-                dropIpsetQuic;
-
-            if (drop) continue;
-
-            SoftenDiscordUdpBlock(block);
-            kept.Add(block);
-        }
-
-        return JoinArgBlocks(kept);
-    }
-
-    private static void SoftenDiscordUdpBlock(List<string> block)
-    {
-        var isDiscordUdp =
-            block.Any(a => a.Contains("filter-l7=discord", StringComparison.OrdinalIgnoreCase) ||
-                           a.Contains("fake-discord", StringComparison.OrdinalIgnoreCase) ||
-                           a.Contains("fake-stun", StringComparison.OrdinalIgnoreCase));
-        if (!isDiscordUdp) return;
-
-        for (var i = 0; i < block.Count; i++)
-        {
-            if (!block[i].StartsWith("--dpi-desync-repeats=", StringComparison.OrdinalIgnoreCase))
-                continue;
-            var eq = block[i].IndexOf('=');
-            if (eq < 0 || !int.TryParse(block[i].AsSpan(eq + 1), out var n) || n > 4)
-                block[i] = "--dpi-desync-repeats=4";
-        }
-
-        if (!block.Any(a => a.StartsWith("--dpi-desync-cutoff=", StringComparison.OrdinalIgnoreCase)))
-            block.Add("--dpi-desync-cutoff=n3");
+        _ = preserveYoutubeQuic;
+        return args;
     }
 
     private static List<List<string>> SplitArgBlocks(List<string> args)

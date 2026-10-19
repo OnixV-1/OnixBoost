@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls;
@@ -26,8 +27,8 @@ public partial class MainWindow : Window
     // Discord / Games / TG / YT each have own CTS — dual winws must not cancel each other
     private CancellationTokenSource? _cts;
     private int _opGen;
-    private CancellationTokenSource? _gamesCts;
-    private int _gamesGen;
+    private CancellationTokenSource? _twitchCts;
+    private int _twitchGen;
     private CancellationTokenSource? _tgCts;
     private int _tgGen;
     private CancellationTokenSource? _ytCts;
@@ -35,20 +36,20 @@ public partial class MainWindow : Window
     // Independent cards — any combination can be ON at once
     private bool _discordOn;
     private bool _youtubeOn;
-    private bool _gamesOn; // Steam / Games card (Steam + Epic/Riot/etc.)
+    private bool _twitchOn; // Twitch HY2 (shared media TUN with YouTube, per-card domains)
     private bool _telegramOn;
     private bool _intentDiscord;
     private bool _intentYoutube;
-    private bool _intentGames;
+    private bool _intentTwitch;
     private string? _dpiStrategyId;
     private string? _dpiStrategyFile;
     private string? _dpiStrategyTitle;
-    private string? _gamesStrategyFile;
+    private string? _twitchStrategyFile;
     private bool _telegramTunnelOwned;
-    private bool _gamesTunnelOwned;
+    private bool _twitchTunnelOwned;
     private bool _youtubeTunnelOwned;
     private BoostTarget? _busyTarget; // Discord connect spinner only
-    private bool _gamesConnecting;
+    private bool _twitchConnecting;
     private bool _youtubeConnecting;
     private bool _telegramConnecting;
     private CancellationTokenSource? _discordWatchCts;
@@ -62,9 +63,9 @@ public partial class MainWindow : Window
     private bool _sessionPrepared;
     private static readonly TimeSpan UpdatePollInterval = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan MaintenanceInterval = TimeSpan.FromHours(6);
-    // YouTube is HY2 tunnel — not DPI/winws
-    private bool AnyDpiOn => _discordOn || _gamesOn;
-    private bool AnyDpiIntent => _intentDiscord || _intentYoutube || _intentGames;
+    // Discord = Flowseal; YT/Twitch/TG = HY2 (not Discord DPI helpers)
+    private bool AnyDpiOn => _discordOn;
+    private bool AnyDpiIntent => _intentDiscord;
 
     /// <summary>Hard cap so «Подключение» cannot hang for minutes (22×2 slow probes).</summary>
     private static readonly TimeSpan DpiOpDeadline = TimeSpan.FromSeconds(75);
@@ -128,20 +129,20 @@ public partial class MainWindow : Window
         try { _ytCts?.Cancel(); } catch { }
     }
 
-    private (CancellationToken Ct, int Gen) BeginGamesOp()
+    private (CancellationToken Ct, int Gen) BeginTwitchOp()
     {
-        try { _gamesCts?.Cancel(); } catch { }
-        try { _gamesCts?.Dispose(); } catch { }
-        _gamesCts = new CancellationTokenSource(DpiOpDeadline);
-        var gen = Interlocked.Increment(ref _gamesGen);
-        return (_gamesCts.Token, gen);
+        try { _twitchCts?.Cancel(); } catch { }
+        try { _twitchCts?.Dispose(); } catch { }
+        _twitchCts = new CancellationTokenSource(DpiOpDeadline);
+        var gen = Interlocked.Increment(ref _twitchGen);
+        return (_twitchCts.Token, gen);
     }
 
-    private bool IsCurrentGamesOp(int gen) => gen == Volatile.Read(ref _gamesGen);
+    private bool IsCurrentTwitchOp(int gen) => gen == Volatile.Read(ref _twitchGen);
 
-    private void CancelGamesOp()
+    private void CancelTwitchOp()
     {
-        try { _gamesCts?.Cancel(); } catch { }
+        try { _twitchCts?.Cancel(); } catch { }
     }
 
     private void SetDpiIntent(BoostTarget target, bool on)
@@ -150,7 +151,7 @@ public partial class MainWindow : Window
         {
             case BoostTarget.Discord: _intentDiscord = on; break;
             case BoostTarget.Youtube: _intentYoutube = on; break;
-            case BoostTarget.Steam: _intentGames = on; break;
+            case BoostTarget.Twitch: _intentTwitch = on; break;
         }
     }
 
@@ -158,12 +159,12 @@ public partial class MainWindow : Window
     {
         _intentDiscord = false;
         _intentYoutube = false;
-        _intentGames = false;
+        _intentTwitch = false;
     }
 
     private static readonly Color ColDiscord = Color.Parse("#5865F2");
     private static readonly Color ColYoutube = Color.Parse("#FF0000");
-    private static readonly Color ColSteam = Color.Parse("#171A21");
+    private static readonly Color ColTwitch = Color.Parse("#9146FF");
     private static readonly Color ColTelegram = Color.Parse("#229ED9");
     private static readonly Color ColActive = Color.Parse("#12B76A");
     private static readonly Color ColActiveBorder = Color.Parse("#32DC8C");
@@ -176,6 +177,7 @@ public partial class MainWindow : Window
         RefreshCards();
         if (string.IsNullOrEmpty(_settings.LastFlowsealDiscord) && !string.IsNullOrEmpty(_settings.LastFlowsealStrategy))
             _settings.LastFlowsealDiscord = _settings.LastFlowsealStrategy;
+        ResetDiscordPreferIfFlowsealProfileChanged();
         VersionText.Text = "v" + AppUpdateChecker.CurrentVersion;
         Log("OnixBoost " + AppUpdateChecker.CurrentVersion);
         if (PathAscii.RootHasNonAscii)
@@ -185,6 +187,40 @@ public partial class MainWindow : Window
         try { BinaryUpdater.ApplyOnixListPatches(); } catch { }
         SetBusy(null);
         _ = RunBackgroundMaintenanceAsync();
+    }
+
+    /// <summary>
+    /// New Flowseal import (vanilla 1.10.3) — drop saved Discord strategy so Soft re-sweeps
+    /// from SIMPLE FAKE instead of a broken ALT13 prefer from older Soft rewrites.
+    /// </summary>
+    private void ResetDiscordPreferIfFlowsealProfileChanged()
+    {
+        try
+        {
+            var metaPath = Path.Combine(AppPaths.ArgsDir, "flowseal_auto_order.json");
+            if (!File.Exists(metaPath)) return;
+            using var doc = JsonDocument.Parse(File.ReadAllText(metaPath));
+            var ver = doc.RootElement.TryGetProperty("version", out var v) ? v.GetString() ?? "" : "";
+            var profile = doc.RootElement.TryGetProperty("profile", out var p) ? p.GetString() ?? "" : "";
+            var want = $"{ver}|{profile}";
+            var stamp = Path.Combine(AppPaths.DpiRoot, ".discord-flowseal-profile");
+            var prev = File.Exists(stamp) ? File.ReadAllText(stamp).Trim() : "";
+            if (prev == want) return;
+            if (!string.IsNullOrEmpty(_settings.LastFlowsealDiscord) ||
+                !string.IsNullOrEmpty(_settings.LastFlowsealStrategy))
+            {
+                Log($"Discord Soft: новый Flowseal {ver} — сброс стратегии, подбор заново");
+                _settings.LastFlowsealDiscord = null;
+                _settings.LastFlowsealStrategy = null;
+                SettingsStore.Save(_settings);
+            }
+            Directory.CreateDirectory(AppPaths.DpiRoot);
+            File.WriteAllText(stamp, want);
+        }
+        catch (Exception ex)
+        {
+            Log("Discord Soft profile stamp: " + ex.Message);
+        }
     }
 
     /// <summary>Updates every 30m; Flowseal lists + Discord IPs every 6h when idle.</summary>
@@ -331,36 +367,30 @@ public partial class MainWindow : Window
         // During DPI rebuild already-ON cards are temporarily down — don't show green «ОНЛАЙН»
         bool discordConn = IsDpiConnecting(BoostTarget.Discord);
         bool youtubeConn = _youtubeConnecting && !_youtubeOn;
-        bool gamesConn = _gamesConnecting || _intentGames;
+        bool twitchConn = _twitchConnecting && !_twitchOn;
         bool tgConn = _telegramConnecting && !_telegramOn;
 
         SetCardLooks(CardDiscord, ColDiscord, LabelDiscord,
             discordConn ? "Подключение" : "", _discordOn && !discordConn);
         SetCardLooks(CardYoutube, ColYoutube, LabelYoutube,
             youtubeConn ? "Подключение" : "", _youtubeOn && !youtubeConn);
-        var gamesOnline = _gamesOn && !gamesConn;
-        var gamesLabel = gamesConn
-            ? "Подключение"
-            : (gamesOnline && _tunnel.IsGamesProfile ? "ОНЛАЙН · TUN" : "");
-        SetCardLooks(CardSteam, ColSteam, LabelSteam, gamesLabel, gamesOnline);
+        SetCardLooks(CardTwitch, ColTwitch, LabelTwitch,
+            twitchConn ? "Подключение" : "", _twitchOn && !twitchConn);
         SetCardLooks(CardTelegram, ColTelegram, LabelTelegram,
             tgConn ? "Подключение" : "", _telegramOn && !tgConn);
 
-        // Spinner on EVERY connecting card, not only the last clicked
         SpinDiscord.IsVisible = discordConn;
         SpinYoutube.IsVisible = youtubeConn;
-        SpinSteam.IsVisible = gamesConn;
+        SpinTwitch.IsVisible = twitchConn;
         SpinTelegram.IsVisible = tgConn;
     }
 
     /// <summary>
-    /// DPI card mid-connect. YouTube/Telegram busy must NOT flash Discord/Games as «Подключение».
+    /// DPI card mid-connect. YouTube/Twitch/Telegram busy must NOT flash Discord as «Подключение».
     /// </summary>
     private bool IsDpiConnecting(BoostTarget t) => t switch
     {
         BoostTarget.Discord => _intentDiscord || _busyTarget == BoostTarget.Discord,
-        BoostTarget.Youtube => false,
-        BoostTarget.Steam => _gamesConnecting || _intentGames,
         _ => false
     };
 
@@ -368,8 +398,8 @@ public partial class MainWindow : Window
     {
         var parts = new System.Collections.Generic.List<string>();
         if (_discordOn) parts.Add("Discord");
-        if (_gamesOn) parts.Add("Games");
         if (_youtubeOn) parts.Add("YouTube");
+        if (_twitchOn) parts.Add("Twitch");
         if (_telegramOn) parts.Add("Telegram");
         if (parts.Count == 0)
         {
@@ -382,14 +412,14 @@ public partial class MainWindow : Window
 
     private void SetBusy(BoostTarget? target)
     {
-        // DPI busy only — never steal YouTube/Telegram connecting flags
-        if (target is BoostTarget.Youtube or BoostTarget.Telegram)
+        // DPI busy only — never steal YouTube/Twitch/Telegram connecting flags
+        if (target is BoostTarget.Youtube or BoostTarget.Twitch or BoostTarget.Telegram)
             return;
         _busyTarget = target;
         RefreshCards();
-        if (target is BoostTarget.Discord or BoostTarget.Steam)
+        if (target is BoostTarget.Discord)
             StatusText.Text = "Подключение";
-        else if (!_youtubeConnecting && !_telegramConnecting)
+        else if (!_youtubeConnecting && !_twitchConnecting && !_telegramConnecting)
         {
             var st = StatusText.Text ?? "";
             if (st == "Подключение" || st.StartsWith("Подключение", StringComparison.Ordinal) ||
@@ -403,24 +433,23 @@ public partial class MainWindow : Window
     {
         BoostTarget.Discord => _discordOn,
         BoostTarget.Youtube => _youtubeOn,
-        BoostTarget.Steam => _gamesOn,
+        BoostTarget.Twitch => _twitchOn,
         BoostTarget.Telegram => _telegramOn,
         _ => false
     };
 
     private async Task ToggleOrBoostAsync(BoostTarget target)
     {
-        // YouTube is HY2 split-tunnel (not DPI) — own path like Telegram
+        // YouTube / Twitch = NL HY2 media TUN (per-card domains), not Discord DPI
         if (target == BoostTarget.Youtube)
         {
             await ToggleYoutubeTunnelAsync();
             return;
         }
 
-        // Games: fully independent dual-winws path (own CTS, own process)
-        if (target == BoostTarget.Steam)
+        if (target == BoostTarget.Twitch)
         {
-            await ToggleGamesDpiAsync();
+            await ToggleTwitchTunnelAsync();
             return;
         }
 
@@ -447,43 +476,118 @@ public partial class MainWindow : Window
         await BoostDiscordAsync();
     }
 
-    private async Task ToggleGamesDpiAsync()
+    private async Task ToggleTwitchTunnelAsync()
     {
-        if (_gamesConnecting)
+        if (_twitchConnecting)
         {
-            SetDpiIntent(BoostTarget.Steam, false);
-            CancelGamesOp();
-            _gamesConnecting = false;
-            RefreshCards();
+            CancelTwitchOp();
             return;
         }
-        if (_gamesOn)
+
+        if (_twitchOn)
         {
-            SetServiceOn(BoostTarget.Steam, false);
-            SetDpiIntent(BoostTarget.Steam, false);
+            _twitchOn = false;
+            _twitchTunnelOwned = false;
             RefreshCards();
-            await TurnOffServiceAsync(BoostTarget.Steam, alreadyCleared: true);
+            try { await RebuildServiceTunnelAsync(CancellationToken.None); } catch { }
+            UpdateStatusUi(EngineAlive);
+            RefreshCards();
+            RefreshHealthSummary();
             return;
         }
-        SetDpiIntent(BoostTarget.Steam, true);
-        _gamesConnecting = true;
+
+        _twitchConnecting = true;
         RefreshCards();
+        SetStatusProgress("Подключение", "#4DA3FF");
         await Task.Yield();
-        await BoostGamesAsync();
+        var (ct, gen) = BeginTwitchOp();
+        try
+        {
+            if (_discordOn)
+            {
+                try { _ = DiscordIpSync.SyncAsync(force: false, ct); } catch { }
+            }
+
+            Exception? last = null;
+            for (var attempt = 1; attempt <= 3; attempt++)
+            {
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    await RebuildServiceTunnelAsync(ct, forceTwitch: true);
+                    if (_tunnel.IsRunning) { last = null; break; }
+                    last = new InvalidOperationException("туннель не стартовал");
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    last = ex;
+                    Log($"Twitch tunnel try {attempt}/3: {ex.Message}");
+                }
+                await Task.Delay(400 * attempt, ct);
+            }
+            if (last != null || !_tunnel.IsRunning)
+                throw last ?? new InvalidOperationException("туннель не стартовал");
+
+            await Task.Delay(500, ct);
+            var probe = await _health.CheckTargetAsync(BoostTarget.Twitch, ct, fastFail: true);
+            Log(probe.Ok
+                ? $"Twitch OK ({probe.Detail}, {probe.Ms} ms)"
+                : $"Twitch tunnel up · probe soft: {probe.Detail}");
+
+            _twitchOn = true;
+            _twitchTunnelOwned = true;
+            _twitchConnecting = false;
+            _intentTwitch = false;
+
+            if (_discordOn)
+                _ = SoftRepairDiscordAfterTunnelAsync(CancellationToken.None);
+
+            UpdateStatusUi(true);
+            RefreshCards();
+            RefreshHealthSummary();
+        }
+        catch (OperationCanceledException)
+        {
+            if (!IsCurrentTwitchOp(gen)) return;
+            _twitchConnecting = false;
+            if (!_twitchOn)
+            {
+                try { await RebuildServiceTunnelAsync(CancellationToken.None); } catch { }
+            }
+            RefreshCards();
+            StatusText.Text = "Таймаут Twitch";
+            StatusText.Foreground = new SolidColorBrush(Color.Parse("#F5A524"));
+        }
+        catch (Exception ex)
+        {
+            if (!IsCurrentTwitchOp(gen)) return;
+            _twitchConnecting = false;
+            _twitchOn = false;
+            _twitchTunnelOwned = false;
+            try { await RebuildServiceTunnelAsync(CancellationToken.None); } catch { }
+            if (_discordOn)
+                _ = SoftRepairDiscordAfterTunnelAsync(CancellationToken.None);
+            RefreshCards();
+            Log("Twitch ERROR: " + ex.Message);
+            var tip = ex.Message.Replace("\u001b", "");
+            if (tip.Length > 48) tip = tip[..48] + "…";
+            StatusText.Text = "Twitch: " + tip;
+            StatusText.Foreground = new SolidColorBrush(Color.Parse("#FF5A64"));
+        }
     }
 
     private bool GetDpiIntent(BoostTarget t) => t switch
     {
         BoostTarget.Discord => _intentDiscord,
         BoostTarget.Youtube => _intentYoutube,
-        BoostTarget.Steam => _intentGames,
+        BoostTarget.Twitch => _intentTwitch,
         _ => false
     };
 
     private BoostTarget? FirstDpiIntentOrOn()
     {
         if (_intentDiscord || _discordOn) return BoostTarget.Discord;
-        if (_intentGames || _gamesOn) return BoostTarget.Steam;
         return null;
     }
 
@@ -492,19 +596,19 @@ public partial class MainWindow : Window
         CancelDiscordWatch();
         _discordOn = false;
         _youtubeOn = false;
-        _gamesOn = false;
+        _twitchOn = false;
         _telegramOn = false;
         ClearDpiIntents();
         _dpiStrategyId = null;
         _dpiStrategyFile = null;
         _dpiStrategyTitle = null;
-        _gamesStrategyFile = null;
+        _twitchStrategyFile = null;
         _telegramTunnelOwned = false;
-        _gamesTunnelOwned = false;
+        _twitchTunnelOwned = false;
         _youtubeTunnelOwned = false;
         _youtubeConnecting = false;
         _telegramConnecting = false;
-        _gamesConnecting = false;
+        _twitchConnecting = false;
         RefreshCards();
     }
 
@@ -518,8 +622,8 @@ public partial class MainWindow : Window
             case BoostTarget.Youtube:
                 _youtubeOn = on;
                 break;
-            case BoostTarget.Steam:
-                _gamesOn = on;
+            case BoostTarget.Twitch:
+                _twitchOn = on;
                 break;
         }
     }
@@ -540,8 +644,8 @@ public partial class MainWindow : Window
 
     private async Task TurnOffServiceAsync(BoostTarget target, bool alreadyCleared = false)
     {
-        if (target == BoostTarget.Steam)
-            CancelGamesOp();
+        if (target == BoostTarget.Twitch)
+            CancelTwitchOp();
         else if (target == BoostTarget.Discord)
             CancelCurrentOp();
 
@@ -555,14 +659,12 @@ public partial class MainWindow : Window
             try { await RebuildServiceTunnelAsync(CancellationToken.None); } catch { }
         }
 
-        if (target == BoostTarget.Steam)
+        if (target == BoostTarget.Twitch)
         {
-            _gamesTunnelOwned = false;
-            _gamesStrategyFile = null;
-            // Games = HY2 only — drop winws leftovers, rebuild YT/TG tunnel without games.
-            try { await _picker.StopGamesAsync(discordStillOn: _discordOn); } catch { }
+            _twitchTunnelOwned = false;
+            _twitchStrategyFile = null;
             try { await RebuildServiceTunnelAsync(CancellationToken.None); }
-            catch (Exception ex) { Log("Games tunnel stop: " + ex.Message); }
+            catch (Exception ex) { Log("Twitch tunnel stop: " + ex.Message); }
         }
         else if (target == BoostTarget.Discord)
         {
@@ -571,10 +673,10 @@ public partial class MainWindow : Window
             _dpiStrategyId = null;
             _dpiStrategyTitle = null;
             try { await _picker.StopDiscordAsync(); } catch { }
-            // Games stays on HY2 independently — no winws restart.
         }
 
-        if (!AnyDpiOn)
+        // WinDivert cleanup only when Discord DPI is fully off (HY2 TUN is unrelated).
+        if (!_discordOn)
         {
             try { await _zapret2.StopAsync(); } catch { }
             try { await _native.StopAsync(); } catch { }
@@ -591,7 +693,7 @@ public partial class MainWindow : Window
             try { await WinDivertCleanup.RunAsync(); } catch { }
         }
 
-        _gamesConnecting = false;
+        _twitchConnecting = false;
         SetBusy(null);
         UpdateStatusUi(EngineAlive);
         RefreshCards();
@@ -657,11 +759,11 @@ public partial class MainWindow : Window
     public async Task StopFromTrayAsync()
     {
         try { _cts?.Cancel(); } catch { }
-        try { _gamesCts?.Cancel(); } catch { }
+        try { _twitchCts?.Cancel(); } catch { }
         try { _tgCts?.Cancel(); } catch { }
         try { _ytCts?.Cancel(); } catch { }
         Interlocked.Increment(ref _opGen);
-        Interlocked.Increment(ref _gamesGen);
+        Interlocked.Increment(ref _twitchGen);
         Interlocked.Increment(ref _tgGen);
         Interlocked.Increment(ref _ytGen);
         // Heavy stop off caller thread; UI updates marshal back
@@ -682,7 +784,7 @@ public partial class MainWindow : Window
     {
         BoostTarget.Discord => _settings.LastFlowsealDiscord ?? _settings.LastFlowsealStrategy,
         BoostTarget.Youtube => _settings.LastFlowsealYoutube ?? _settings.LastFlowsealDiscord,
-        BoostTarget.Steam => _settings.LastFlowsealSteam,
+        BoostTarget.Twitch => _settings.LastFlowsealTwitch,
         _ => null
     };
 
@@ -692,7 +794,7 @@ public partial class MainWindow : Window
         {
             case BoostTarget.Discord: _settings.LastFlowsealDiscord = id; break;
             case BoostTarget.Youtube: _settings.LastFlowsealYoutube = id; break;
-            case BoostTarget.Steam: _settings.LastFlowsealSteam = id; break;
+            case BoostTarget.Twitch: _settings.LastFlowsealTwitch = id; break;
         }
         SettingsStore.Save(_settings);
     }
@@ -762,7 +864,7 @@ public partial class MainWindow : Window
             _ = Task.Run(PersistUiSettings);
             await Task.Yield();
 
-            await EnsureSessionPreparedAsync(ct, killOtherWorkers: !_gamesOn && !_youtubeOn && !_telegramOn);
+            await EnsureSessionPreparedAsync(ct, killOtherWorkers: !_twitchOn && !_youtubeOn && !_telegramOn);
             await SyncDiscordIpsQuietAsync(ct);
 
             if (!_discordOn)
@@ -902,11 +1004,7 @@ public partial class MainWindow : Window
         CancellationToken ct, string sid, string sfile, string stitle, bool probeOk)
     {
         await FinishDpiSuccessAsync(true, false, false, ct, sid, sfile, stitle);
-        // Games is HY2 — keep tunnel if card is ON; do not append DPI into Discord.
-        if (_gamesOn)
-        {
-            try { await RebuildServiceTunnelAsync(ct); } catch { }
-        }
+        // Media DPI stays on Games slot; Discord does not rebuild it.
         StartDiscordWatchdog();
         if (!probeOk)
             Log("Discord ONLINE (soft) — watchdog will recheck");
@@ -972,8 +1070,6 @@ public partial class MainWindow : Window
                         {
                             SavePrefer(BoostTarget.Discord, sid);
                             RememberDpiStrategy(sid, sfile, stitle ?? sid);
-                            if (_gamesOn)
-                                await RebuildServiceTunnelAsync(CancellationToken.None, forceGames: true);
                             Log($"Discord watchdog OK sweep: {stitle}");
                             repaired = true;
                         }
@@ -995,86 +1091,6 @@ public partial class MainWindow : Window
         catch (Exception ex) { Log("Discord watchdog: " + ex.Message); }
     }
 
-    private async Task BoostGamesAsync()
-    {
-        var (ct, gen) = BeginGamesOp();
-        try
-        {
-            _gamesConnecting = true;
-            RefreshCards();
-            SetStatusProgress("Подключение", "#4DA3FF");
-            _ = Task.Run(PersistUiSettings);
-            await Task.Yield();
-
-            await EnsureSessionPreparedAsync(ct, killOtherWorkers: !_discordOn && !_youtubeOn && !_telegramOn);
-
-            // Force-refresh Discord CIDRs so they are excluded from Games TUN
-            // (WinDivert must see Discord on the physical NIC, not via WinTUN).
-            try
-            {
-                var (ipOk, ipMsg) = await DiscordIpSync.SyncAsync(force: true, ct);
-                if (ipOk) Log(ipMsg);
-            }
-            catch (Exception ex) { Log("Discord IPs: " + ex.Message); }
-            try { await _picker.StopGamesAsync(); } catch { }
-
-            Log("Games: HY2 DE (browser/Discord→direct, игры→DE, TUN)…");
-
-            _gamesOn = true;
-            _intentGames = false;
-            await RebuildServiceTunnelAsync(ct, forceGames: true);
-
-            if (!_tunnel.IsGamesProfile && !_tunnel.IsRunning)
-            {
-                _gamesOn = false;
-                _gamesConnecting = false;
-                _gamesTunnelOwned = false;
-                RefreshCards();
-                UpdateStatusUi(EngineAlive);
-                StatusText.Text = "Games не удалось";
-                StatusText.Foreground = new SolidColorBrush(Color.Parse("#F5A524"));
-                Log("Games HY2 failed to stay up");
-                return;
-            }
-
-            _gamesStrategyFile = "client-games.json";
-            _gamesConnecting = false;
-            Log("OK via HY2 Games (DE)");
-
-            UpdateStatusUi(true);
-            RefreshCards();
-            RefreshHealthSummary();
-        }
-        catch (OperationCanceledException)
-        {
-            if (!IsCurrentGamesOp(gen)) return;
-            Log("Games: таймаут/отмена");
-            if (!_gamesOn) _intentGames = false;
-            _gamesConnecting = false;
-            if (_gamesOn)
-            {
-                try { await RebuildServiceTunnelAsync(CancellationToken.None, forceGames: true); } catch { }
-            }
-            RefreshCards();
-            UpdateStatusUi(EngineAlive);
-            StatusText.Text = "Таймаут Games";
-            StatusText.Foreground = new SolidColorBrush(Color.Parse("#F5A524"));
-        }
-        catch (Exception ex)
-        {
-            if (!IsCurrentGamesOp(gen)) return;
-            _gamesOn = false;
-            _intentGames = false;
-            _gamesConnecting = false;
-            _gamesTunnelOwned = false;
-            try { await RebuildServiceTunnelAsync(CancellationToken.None); } catch { }
-            RefreshCards();
-            UpdateStatusUi(EngineAlive);
-            Log("Games ERROR: " + ex.Message);
-            StatusText.Text = "Ошибка Games";
-            StatusText.Foreground = new SolidColorBrush(Color.Parse("#FF5A64"));
-        }
-    }
 
     private async Task FailDpiConnectAsync(bool extending, string label)
     {
@@ -1090,7 +1106,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Discord DPI + Games HY2 are independent — only refresh Discord Flowseal (no games append).
+    /// Discord DPI + Media DPI are independent — only refresh Discord Flowseal.
     /// </summary>
     private async Task RefreshDualExclusiveAsync()
     {
@@ -1098,10 +1114,8 @@ public partial class MainWindow : Window
             return;
         try
         {
-            Log("Discord Flowseal refresh (Games stays on HY2)…");
+            Log("Discord Flowseal refresh (Media untouched)…");
             await _picker.StartDiscordAsync(_dpiStrategyFile, gamesAlsoOn: false);
-            if (_gamesOn)
-                await RebuildServiceTunnelAsync(CancellationToken.None, forceGames: true);
         }
         catch (Exception ex)
         {
@@ -1110,7 +1124,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Mark every requested DPI card ON and clear their connect intents.</summary>
-    private void CommitDpiIntents(bool wantDiscord, bool wantYoutube, bool wantGames)
+    private void CommitDpiIntents(bool wantDiscord, bool wantYoutube, bool wantTwitch)
     {
         if (wantDiscord)
         {
@@ -1122,59 +1136,81 @@ public partial class MainWindow : Window
             _youtubeOn = true;
             _intentYoutube = false;
         }
-        if (wantGames)
+        if (wantTwitch)
         {
-            _gamesOn = true;
-            _intentGames = false;
+            _twitchOn = true;
+            _intentTwitch = false;
         }
     }
 
     private async Task FinishDpiSuccessAsync(
-        bool wantDiscord, bool wantYoutube, bool wantGames, CancellationToken ct,
+        bool wantDiscord, bool wantYoutube, bool wantTwitch, CancellationToken ct,
         string sid, string sfile, string stitle)
     {
         RememberDpiStrategy(sid, sfile, stitle);
-        CommitDpiIntents(wantDiscord, wantYoutube, wantGames);
+        CommitDpiIntents(wantDiscord, wantYoutube, wantTwitch);
         Log($"OK via {stitle}");
-        await RebuildServiceTunnelAsync(ct);
+        // Discord finish must not restart Media DPI or a healthy Telegram TUN.
         SetBusy(null);
         UpdateStatusUi(true);
         RefreshCards();
         RefreshHealthSummary();
+        await Task.CompletedTask;
     }
 
     /// <summary>
-    /// One HY2 process for YouTube / Telegram / Games.
-    /// Games = Steam + launchers + Aion/Predecessor via DE HY2. YT/TG stay NL. Discord = DPI.
+    /// One HY2 process for YouTube / Twitch / Telegram.
+    /// YT+TW → media TUN (per-card domains). TG alone → OnixBoostTG route_address.
     /// </summary>
     private async Task RebuildServiceTunnelAsync(
         CancellationToken ct,
         bool forceYoutube = false,
-        bool forceGames = false)
+        bool forceTwitch = false)
     {
         var wantYt = forceYoutube || _youtubeOn;
         var wantTg = _telegramOn;
-        var wantGames = forceGames || _gamesOn;
+        var wantTwitch = forceTwitch || _twitchOn;
 
-        if (!wantYt && !wantTg && !wantGames)
+        // Drop leftover Media winws DPI from 2.8.89 experiments — HY2 owns YT/Twitch now.
+        try { await _picker.StopGamesAsync(); } catch { }
+
+        if (!wantYt && !wantTg && !wantTwitch)
         {
-            if (_youtubeTunnelOwned || _telegramTunnelOwned || _gamesTunnelOwned)
+            if (_youtubeTunnelOwned || _telegramTunnelOwned || _twitchTunnelOwned || _tunnel.IsRunning)
             {
                 try { await _tunnel.StopAsync(); } catch { }
                 _youtubeTunnelOwned = false;
                 _telegramTunnelOwned = false;
-                _gamesTunnelOwned = false;
+                _twitchTunnelOwned = false;
             }
             return;
         }
 
         ct.ThrowIfCancellationRequested();
-        Log($"Tunnel: YT={wantYt} TG={wantTg} Games={wantGames}");
-        await _tunnel.StartServiceTunnelAsync(wantYt, wantTg, wantGames);
+
+        // Avoid bouncing a healthy TG-only tunnel when nothing media-related changed.
+        if (!wantYt && !wantTwitch && wantTg &&
+            _tunnel.IsRunning && _tunnel.IsTelegramOnly)
+        {
+            _telegramTunnelOwned = true;
+            _youtubeTunnelOwned = false;
+            _twitchTunnelOwned = false;
+            return;
+        }
+
+        Log($"Tunnel: YT={wantYt} TG={wantTg} Twitch={wantTwitch} discordExcl={_discordOn}");
+        await _tunnel.StartServiceTunnelAsync(wantYt, wantTg, wantTwitch, excludeDiscordCidrs: _discordOn);
         _youtubeTunnelOwned = wantYt;
-        _gamesTunnelOwned = wantGames;
+        _twitchTunnelOwned = wantTwitch;
         _telegramTunnelOwned = wantTg;
         await Task.Delay(500, ct);
+    }
+
+    private async Task RebuildTelegramTunnelAsync(CancellationToken ct, bool force = false)
+    {
+        if (force)
+            _telegramOn = true;
+        await RebuildServiceTunnelAsync(ct);
     }
 
     private async Task ToggleYoutubeTunnelAsync()
@@ -1204,7 +1240,6 @@ public partial class MainWindow : Window
         var (ct, gen) = BeginYtOp();
         try
         {
-            // Independent of Discord DPI — own CTS + HY2 only (same as Telegram).
             if (_discordOn)
             {
                 try { _ = DiscordIpSync.SyncAsync(force: false, ct); } catch { }
@@ -1267,16 +1302,18 @@ public partial class MainWindow : Window
             _youtubeOn = false;
             _youtubeTunnelOwned = false;
             try { await RebuildServiceTunnelAsync(CancellationToken.None); } catch { }
+            if (_discordOn)
+                _ = SoftRepairDiscordAfterTunnelAsync(CancellationToken.None);
             RefreshCards();
             Log("YouTube ERROR: " + ex.Message);
-            var tip = ex.Message;
-            if (tip.Length > 42) tip = tip[..42] + "…";
+            var tip = ex.Message.Replace("\u001b", "");
+            if (tip.Length > 48) tip = tip[..48] + "…";
             StatusText.Text = "YouTube: " + tip;
             StatusText.Foreground = new SolidColorBrush(Color.Parse("#FF5A64"));
         }
     }
 
-    /// <summary>After HY2 YouTube comes up, re-check Discord and restart Discord winws only.</summary>
+    /// <summary>After HY2 media TUN comes up, re-check Discord and restart Discord winws only.</summary>
     private async Task SoftRepairDiscordAfterTunnelAsync(CancellationToken ct)
     {
         if (!_discordOn || string.IsNullOrEmpty(_dpiStrategyFile)) return;
@@ -1309,10 +1346,10 @@ public partial class MainWindow : Window
     /// Games stays soft — Steam/Epic/Riot probes are unreliable.
     /// </summary>
     private async Task<bool> AcceptComboAsync(
-        bool wantDiscord, bool wantYoutube, bool wantGames, CancellationToken ct,
+        bool wantDiscord, bool wantYoutube, bool wantTwitch, CancellationToken ct,
         int retries = 0)
     {
-        if (wantGames && !wantDiscord && !wantYoutube)
+        if (wantTwitch && !wantDiscord && !wantYoutube)
             return true;
 
         for (var attempt = 0; attempt <= retries; attempt++)
@@ -1346,18 +1383,18 @@ public partial class MainWindow : Window
             }
             if (dOk && yOk)
             {
-                if (wantGames)
+                if (wantTwitch)
                 {
-                    var g = await _health.CheckTargetAsync(BoostTarget.Steam, ct, fastFail: true);
+                    var g = await _health.CheckTargetAsync(BoostTarget.Twitch, ct, fastFail: true);
                     if (!g.Ok) Log($"Games soft: {g.Detail}");
                 }
-                return wantDiscord || wantYoutube || wantGames;
+                return wantDiscord || wantYoutube || wantTwitch;
             }
         }
         return false;
     }
 
-    /// <summary>Telegram split-tunnel — independent of Discord/Games DPI (own CTS).</summary>
+    /// <summary>Telegram HY2 OnixBoostTG — independent of Discord/Media DPI (own CTS).</summary>
     private async void OnBoostTelegram(object? sender, RoutedEventArgs e)
     {
         if (_telegramConnecting)
@@ -1385,10 +1422,10 @@ public partial class MainWindow : Window
             {
                 ct.ThrowIfCancellationRequested();
 
-                _telegramOn = true; // so Rebuild includes TG routes before MarkOnline
+                _telegramOn = true;
                 try
                 {
-                    await RebuildServiceTunnelAsync(ct);
+                    await RebuildTelegramTunnelAsync(ct, force: true);
                 }
                 catch
                 {
@@ -1424,7 +1461,7 @@ public partial class MainWindow : Window
 
             _telegramOn = false;
             _telegramConnecting = false;
-            try { await RebuildServiceTunnelAsync(CancellationToken.None); } catch { }
+            try { await RebuildTelegramTunnelAsync(CancellationToken.None); } catch { }
             RefreshCards();
             StatusText.Text = "Telegram не удалось";
             StatusText.Foreground = new SolidColorBrush(Color.Parse("#FF5A64"));
@@ -1435,7 +1472,7 @@ public partial class MainWindow : Window
             _telegramConnecting = false;
             if (!_telegramOn)
             {
-                try { await RebuildServiceTunnelAsync(CancellationToken.None); } catch { }
+                try { await RebuildTelegramTunnelAsync(CancellationToken.None); } catch { }
             }
             RefreshCards();
         }
@@ -1444,7 +1481,7 @@ public partial class MainWindow : Window
             if (!IsCurrentTgOp(gen)) return;
             _telegramConnecting = false;
             _telegramOn = false;
-            try { await RebuildServiceTunnelAsync(CancellationToken.None); } catch { }
+            try { await RebuildTelegramTunnelAsync(CancellationToken.None); } catch { }
             RefreshCards();
             Log("ERROR: " + ex.Message);
             StatusText.Text = "Telegram не удалось";
@@ -1509,18 +1546,18 @@ public partial class MainWindow : Window
 
     private async void OnBoostDiscord(object? sender, RoutedEventArgs e) => await ToggleOrBoostAsync(BoostTarget.Discord);
     private async void OnBoostYoutube(object? sender, RoutedEventArgs e) => await ToggleYoutubeTunnelAsync();
-    private async void OnBoostSteam(object? sender, RoutedEventArgs e) => await ToggleOrBoostAsync(BoostTarget.Steam);
+    private async void OnBoostTwitch(object? sender, RoutedEventArgs e) => await ToggleOrBoostAsync(BoostTarget.Twitch);
 
     private async void OnStop(object? sender, RoutedEventArgs e)
     {
         try
         {
             CancelCurrentOp();
-            CancelGamesOp();
+            CancelTwitchOp();
             CancelTgOp();
             CancelYtOp();
             Interlocked.Increment(ref _opGen);
-            Interlocked.Increment(ref _gamesGen);
+            Interlocked.Increment(ref _twitchGen);
             Interlocked.Increment(ref _tgGen);
             Interlocked.Increment(ref _ytGen);
             await StopAllAsync();
@@ -1589,7 +1626,7 @@ public partial class MainWindow : Window
         // (that froze the tray menu). Quick kill only; DNS/WinDivert may already be restoring.
         try { _updatePollCts?.Cancel(); } catch { }
         try { _cts?.Cancel(); } catch { }
-        try { _gamesCts?.Cancel(); } catch { }
+        try { _twitchCts?.Cancel(); } catch { }
         try { _tgCts?.Cancel(); } catch { }
         try { ProcessNames.KillAllWorkers(); } catch { }
         base.OnClosing(e);
