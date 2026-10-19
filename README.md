@@ -228,7 +228,7 @@ Get-FileHash .\OnixBoost-Setup.exe -Algorithm SHA256
 |-------|------------|
 | `OnixBoost/` | Приложение |
 | `OnixBoost.Setup/` | Установщик |
-| `assets/` | Логотипы, скриншот, демо |
+| `assets/` | Логотипы и скриншот |
 | `LICENSE` | Условия использования |
 | `THIRD-PARTY-NOTICES.md` | Сторонние компоненты |
 | `SECURITY.md` | Уязвимости |
