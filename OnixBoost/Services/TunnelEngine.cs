@@ -7,92 +7,135 @@ using System.Threading.Tasks;
 namespace OnixBoost.Services;
 
 /// <summary>
-/// NL Hysteria2 via TUN (dpi/core/OnixBoost.exe — formerly sing-box).
-/// Profiles embedded as JSON resources; materialized under dpi/core/.rt
+/// One HY2 worker process. Media and Telegram use separate instances so cards never
+/// stop each other (no merged YT+TG config, no KillCoreWorkers blast).
 /// </summary>
+public enum TunnelKind
+{
+    /// <summary>YouTube / Twitch mixed :17890 + PAC (no TUN).</summary>
+    Media,
+    /// <summary>Telegram OnixBoostTG route_address TUN.</summary>
+    Telegram
+}
+
 public sealed class TunnelEngine
 {
+    private readonly TunnelKind _kind;
     private Process? _proc;
-    private string? _activeProfile; // "full" | "telegram" | "games" | "youtube" | "youtube-tg" | "games-yt"
+    private string? _activeProfile;
     private string? _liveConfigPath;
+    private bool _pacEnabled;
 
-    public bool IsRunning =>
-        (_proc is { HasExited: false }) || ProcessNames.CoreWorkerRunning();
+    public TunnelEngine(TunnelKind kind) => _kind = kind;
+
+    public TunnelKind Kind => _kind;
+
+    public bool IsRunning => _proc is { HasExited: false };
 
     public bool IsTelegramOnly =>
-        IsRunning && string.Equals(_activeProfile, "telegram", StringComparison.OrdinalIgnoreCase);
+        _kind == TunnelKind.Telegram && IsRunning;
 
-    public bool IsGamesProfile =>
-        IsRunning && (_activeProfile?.StartsWith("games", StringComparison.OrdinalIgnoreCase) ?? false);
+    public bool IsTwitchProfile =>
+        _kind == TunnelKind.Media && IsRunning &&
+        (_activeProfile?.Contains("twitch", StringComparison.OrdinalIgnoreCase) ?? false);
 
     public bool IsYoutubeProfile =>
-        IsRunning && (_activeProfile?.Contains("youtube", StringComparison.OrdinalIgnoreCase) ?? false);
+        _kind == TunnelKind.Media && IsRunning &&
+        (_activeProfile?.Contains("youtube", StringComparison.OrdinalIgnoreCase) ?? false);
 
     private static string CoreDir => Path.Combine(AppPaths.DpiRoot, "core");
     private static string CoreExe => Path.Combine(CoreDir, "OnixBoost.exe");
 
-    public Task StartAsync() => StartProfileAsync("full", "client.json", "f1");
+    private string RuntimeLeaf => _kind == TunnelKind.Telegram ? "tg1" : "media1";
 
-    public Task StartTelegramAsync() => StartProfileAsync("telegram", "client-telegram.json", "t1");
+    public Task StartAsync() =>
+        StartMediaAsync(youtube: true, twitch: false);
 
-    public Task StartGamesAsync() => StartProfileAsync("games", "client-games.json", "g1");
+    public Task StartTelegramAsync() =>
+        StartTelegramCoreAsync();
+
+    public Task StartTwitchAsync() =>
+        StartMediaAsync(youtube: false, twitch: true);
 
     public Task StartYoutubeAsync() =>
-        StartProfileAsync("youtube", "client-youtube.json", "y1");
+        StartMediaAsync(youtube: true, twitch: false);
+
+    /// <summary>Media card only — never touches Telegram process.</summary>
+    public Task StartMediaAsync(bool youtube, bool twitch)
+    {
+        if (_kind != TunnelKind.Media)
+            throw new InvalidOperationException("StartMediaAsync requires TunnelKind.Media");
+
+        if (!youtube && !twitch)
+            return StopAsync();
+
+        var parts = new System.Collections.Generic.List<string>();
+        if (youtube) parts.Add("youtube");
+        if (twitch) parts.Add("twitch");
+        return StartProfileAsync(string.Join("-", parts), youtube, twitch, telegram: false);
+    }
 
     /// <summary>
-    /// One HY2 process for the active tunnel cards (YouTube / Telegram / Games).
-    /// Games profile already includes Telegram; YouTube domains are injected when needed.
+    /// Legacy combined entry. Telegram flag is ignored on Media engines —
+    /// use a separate TunnelKind.Telegram instance.
     /// </summary>
-    public Task StartServiceTunnelAsync(bool youtube, bool telegram, bool games)
+    public Task StartServiceTunnelAsync(
+        bool youtube, bool telegram, bool twitch, bool excludeDiscordCidrs = false)
     {
-        if (games)
-            return StartProfileAsync(
-                youtube ? "games-yt" : "games",
-                "client-games.json",
-                youtube ? "gy1" : "g1",
-                injectYoutube: youtube);
+        _ = excludeDiscordCidrs;
+        if (_kind == TunnelKind.Telegram)
+        {
+            if (!telegram && !youtube && !twitch)
+                return StopAsync();
+            return StartTelegramCoreAsync();
+        }
 
-        if (youtube && telegram)
-            return StartProfileAsync(
-                "youtube-tg", "client-youtube.json", "yt1",
-                injectTelegram: true);
+        // Media engine: never merge Telegram into this process.
+        if (!youtube && !twitch)
+            return StopAsync();
+        return StartMediaAsync(youtube, twitch);
+    }
 
-        if (youtube)
-            return StartYoutubeAsync();
-
-        if (telegram)
-            return StartTelegramAsync();
-
-        return StopAsync();
+    private Task StartTelegramCoreAsync()
+    {
+        if (_kind != TunnelKind.Telegram)
+            throw new InvalidOperationException("StartTelegramAsync requires TunnelKind.Telegram");
+        return StartProfileAsync("tg", youtube: false, twitch: false, telegram: true);
     }
 
     private async Task StartProfileAsync(
         string profile,
-        string logicalJson,
-        string runtimeLeaf,
-        bool injectYoutube = false,
-        bool injectTelegram = false)
+        bool youtube,
+        bool twitch,
+        bool telegram)
     {
         await StopAsync();
+        await Task.Delay(600);
 
         if (!File.Exists(CoreExe))
             throw new FileNotFoundException("OnixBoost core missing (dpi/core/OnixBoost.exe)", CoreExe);
-        var wintun = Path.Combine(CoreDir, "wintun.dll");
-        if (!File.Exists(wintun))
-            throw new FileNotFoundException("wintun.dll missing in dpi/core/", wintun);
 
-        var live = TunnelConfigStore.Materialize(logicalJson, runtimeLeaf, injectYoutube, injectTelegram);
+        if (TunnelConfigStore.NeedsWintun(telegram))
+        {
+            var wintun = Path.Combine(CoreDir, "wintun.dll");
+            if (!File.Exists(wintun))
+                throw new FileNotFoundException("wintun.dll missing in dpi/core/", wintun);
+        }
+
+        var live = telegram
+            ? TunnelConfigStore.MaterializeTelegram(RuntimeLeaf)
+            : TunnelConfigStore.MaterializeService(
+                RuntimeLeaf, youtube, twitch, telegram: false, excludeDiscord: false);
         _liveConfigPath = live;
         if (!File.Exists(live))
             throw new FileNotFoundException("Failed to materialize tunnel config", live);
 
         var rel = Path.GetRelativePath(CoreDir, live).Replace('/', '\\');
-        var errLog = Path.Combine(CoreDir, ".rt", "core-err.log");
+        var errLog = Path.Combine(CoreDir, ".rt",
+            _kind == TunnelKind.Telegram ? "core-tg-err.log" : "core-media-err.log");
         try { Directory.CreateDirectory(Path.GetDirectoryName(errLog)!); } catch { }
         try { File.Delete(errLog); } catch { }
 
-        // Validate config first (captures parse errors without TUN)
         try
         {
             var check = Process.Start(new ProcessStartInfo
@@ -115,7 +158,7 @@ public sealed class TunnelEngine
                     var tip = (se + "\n" + so).Trim();
                     try { await File.WriteAllTextAsync(errLog, tip); } catch { }
                     throw new InvalidOperationException(
-                        "Tunnel config error.\n" + tip[..Math.Min(700, tip.Length)]);
+                        "Tunnel config error.\n" + StripAnsi(tip)[..Math.Min(400, StripAnsi(tip).Length)]);
                 }
             }
         }
@@ -145,7 +188,7 @@ public sealed class TunnelEngine
         proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (logBuf) logBuf.AppendLine(e.Data); };
         try { proc.BeginOutputReadLine(); proc.BeginErrorReadLine(); } catch { }
 
-        await Task.Delay(1800);
+        await Task.Delay(telegram ? 1800 : 900);
 
         if (proc.HasExited || !IsRunning)
         {
@@ -153,7 +196,7 @@ public sealed class TunnelEngine
             string tip;
             lock (logBuf) tip = logBuf.ToString();
             if (string.IsNullOrWhiteSpace(tip))
-                tip = TryReadLog(profile);
+                tip = TryReadLog();
             if (string.IsNullOrWhiteSpace(tip))
                 tip = "process exited code=" + (proc.HasExited ? proc.ExitCode.ToString() : "?") +
                       " — run OnixBoost as Admin; allow firewall for OnixBoost";
@@ -163,31 +206,55 @@ public sealed class TunnelEngine
                 _proc = null;
                 _activeProfile = null;
             }
-            TunnelConfigStore.ScrubRuntime();
+            TunnelConfigStore.ScrubRuntimeLeaf(RuntimeLeaf);
             _liveConfigPath = null;
+            var clean = StripAnsi(tip);
             throw new InvalidOperationException(
-                "Tunnel failed to start.\n" + tip[..Math.Min(700, tip.Length)]);
+                "Tunnel failed to start.\n" + clean[..Math.Min(400, clean.Length)]);
         }
 
-        Logger.Info(profile.StartsWith("games", StringComparison.OrdinalIgnoreCase)
-            ? "Tunnel Games HY2 (DE) up (" + profile + ")"
-            : "Tunnel NL HY2 up (" + profile + ")");
+        if (youtube || twitch)
+        {
+            try
+            {
+                SystemProxyHelper.EnableMediaPac(youtube, twitch);
+                _pacEnabled = true;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("PAC enable: " + ex.Message);
+                try { await StopAsync(); } catch { }
+                throw new InvalidOperationException("Не удалось включить системный PAC: " + ex.Message);
+            }
+        }
+
+        Logger.Info("NL HY2 up (" + _kind + "/" + profile + ") pid=" + proc.Id + " pac=" + _pacEnabled);
     }
 
-    private static string TryReadLog(string profile)
+    private static string StripAnsi(string s)
     {
-        var name = profile switch
+        if (string.IsNullOrEmpty(s)) return s;
+        var sb = new StringBuilder(s.Length);
+        for (var i = 0; i < s.Length; i++)
         {
-            "telegram" => "core-telegram.log",
-            "games" or "games-yt" => "core-games.log",
-            "youtube" or "youtube-tg" => "core-youtube.log",
-            _ => "core.log"
-        };
+            if (s[i] == '\u001b' && i + 1 < s.Length && s[i + 1] == '[')
+            {
+                i += 2;
+                while (i < s.Length && s[i] != 'm') i++;
+                continue;
+            }
+            sb.Append(s[i]);
+        }
+        return sb.ToString().Replace("\r", " ").Replace("\n", " ").Trim();
+    }
+
+    private string TryReadLog()
+    {
         foreach (var log in new[]
                  {
-                     Path.Combine(CoreDir, name),
-                     Path.Combine(CoreDir, ".rt", name),
-                     Path.Combine(CoreDir, ".rt", "core-err.log")
+                     Path.Combine(CoreDir, _kind == TunnelKind.Telegram ? "core-telegram.log" : "core-media.log"),
+                     Path.Combine(CoreDir, ".rt",
+                         _kind == TunnelKind.Telegram ? "core-tg-err.log" : "core-media-err.log")
                  })
         {
             if (File.Exists(log))
@@ -198,8 +265,15 @@ public sealed class TunnelEngine
         return "";
     }
 
+    /// <summary>Stop only this engine's process. Never kills the sibling HY2 worker.</summary>
     public Task StopAsync()
     {
+        if (_pacEnabled)
+        {
+            try { SystemProxyHelper.DisableMediaPac(); } catch { }
+            _pacEnabled = false;
+        }
+
         try
         {
             if (_proc is { HasExited: false })
@@ -210,12 +284,11 @@ public sealed class TunnelEngine
         }
         catch { }
 
-        ProcessNames.KillCoreWorkers();
-
+        // PID-scoped only — never blast-kill other OnixBoost.exe under dpi/core.
         _proc = null;
         _activeProfile = null;
         _liveConfigPath = null;
-        TunnelConfigStore.ScrubRuntime();
+        TunnelConfigStore.ScrubRuntimeLeaf(RuntimeLeaf);
         return Task.CompletedTask;
     }
 }

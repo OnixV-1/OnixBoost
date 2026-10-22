@@ -4,7 +4,6 @@ public enum BoostTarget
 {
     Discord,
     Youtube,
-    Steam,
-    DiscordSteam,
+    Twitch,
     Telegram
 }

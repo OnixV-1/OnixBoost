@@ -20,7 +20,8 @@ public partial class MainWindow : Window
     private readonly WinwsEngine _winwsDiscord = new(WinwsSlot.Discord);
     private readonly WinwsEngine _winwsGames = new(WinwsSlot.Games);
     private readonly Zapret2Engine _zapret2 = new();
-    private readonly TunnelEngine _tunnel = new();
+    private readonly TunnelEngine _tunnelMedia = new(TunnelKind.Media);
+    private readonly TunnelEngine _tunnelTg = new(TunnelKind.Telegram);
     private readonly HealthChecker _health = new();
     private readonly StrategyAutoPicker _picker;
     private AppSettings _settings = SettingsStore.Load();
@@ -101,7 +102,7 @@ public partial class MainWindow : Window
     {
         try { _tgCts?.Cancel(); } catch { }
         try { _tgCts?.Dispose(); } catch { }
-        _tgCts = new CancellationTokenSource();
+        _tgCts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var gen = Interlocked.Increment(ref _tgGen);
         return (_tgCts.Token, gen);
     }
@@ -489,7 +490,7 @@ public partial class MainWindow : Window
             _twitchOn = false;
             _twitchTunnelOwned = false;
             RefreshCards();
-            try { await RebuildServiceTunnelAsync(CancellationToken.None); } catch { }
+            try { await RebuildMediaTunnelAsync(CancellationToken.None); } catch { }
             UpdateStatusUi(EngineAlive);
             RefreshCards();
             RefreshHealthSummary();
@@ -514,8 +515,8 @@ public partial class MainWindow : Window
                 ct.ThrowIfCancellationRequested();
                 try
                 {
-                    await RebuildServiceTunnelAsync(ct, forceTwitch: true);
-                    if (_tunnel.IsRunning) { last = null; break; }
+                    await RebuildMediaTunnelAsync(ct, forceTwitch: true);
+                    if (_tunnelMedia.IsRunning) { last = null; break; }
                     last = new InvalidOperationException("туннель не стартовал");
                 }
                 catch (OperationCanceledException) { throw; }
@@ -526,7 +527,7 @@ public partial class MainWindow : Window
                 }
                 await Task.Delay(400 * attempt, ct);
             }
-            if (last != null || !_tunnel.IsRunning)
+            if (last != null || !_tunnelMedia.IsRunning)
                 throw last ?? new InvalidOperationException("туннель не стартовал");
 
             await Task.Delay(500, ct);
@@ -553,7 +554,7 @@ public partial class MainWindow : Window
             _twitchConnecting = false;
             if (!_twitchOn)
             {
-                try { await RebuildServiceTunnelAsync(CancellationToken.None); } catch { }
+                try { await RebuildMediaTunnelAsync(CancellationToken.None); } catch { }
             }
             RefreshCards();
             StatusText.Text = "Таймаут Twitch";
@@ -565,7 +566,7 @@ public partial class MainWindow : Window
             _twitchConnecting = false;
             _twitchOn = false;
             _twitchTunnelOwned = false;
-            try { await RebuildServiceTunnelAsync(CancellationToken.None); } catch { }
+            try { await RebuildMediaTunnelAsync(CancellationToken.None); } catch { }
             if (_discordOn)
                 _ = SoftRepairDiscordAfterTunnelAsync(CancellationToken.None);
             RefreshCards();
@@ -656,14 +657,14 @@ public partial class MainWindow : Window
         if (target == BoostTarget.Youtube)
         {
             _youtubeTunnelOwned = false;
-            try { await RebuildServiceTunnelAsync(CancellationToken.None); } catch { }
+            try { await RebuildMediaTunnelAsync(CancellationToken.None); } catch { }
         }
 
         if (target == BoostTarget.Twitch)
         {
             _twitchTunnelOwned = false;
             _twitchStrategyFile = null;
-            try { await RebuildServiceTunnelAsync(CancellationToken.None); }
+            try { await RebuildMediaTunnelAsync(CancellationToken.None); }
             catch (Exception ex) { Log("Twitch tunnel stop: " + ex.Message); }
         }
         else if (target == BoostTarget.Discord)
@@ -716,7 +717,8 @@ public partial class MainWindow : Window
 
     private bool EngineAlive =>
         _zapret2.IsRunning || _native.IsRunning || _picker.GamesDivertRunning ||
-        _winwsDiscord.IsRunning || _winwsGames.IsRunning || _tunnel.IsRunning;
+        _winwsDiscord.IsRunning || _winwsGames.IsRunning ||
+        _tunnelMedia.IsRunning || _tunnelTg.IsRunning;
 
     private void PersistUiSettings() => SettingsStore.Save(_settings);
 
@@ -739,7 +741,8 @@ public partial class MainWindow : Window
     private async Task StopAllAsync()
     {
         CancelDiscordWatch();
-        await _tunnel.StopAsync();
+        try { await _tunnelMedia.StopAsync(); } catch { }
+        try { await _tunnelTg.StopAsync(); } catch { }
         await _zapret2.StopAsync();
         await _native.StopAsync();
         await _picker.StopAllWinwsAsync();
@@ -1159,59 +1162,76 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// One HY2 process for YouTube / Twitch / Telegram.
-    /// YT+TW → media TUN (per-card domains). TG alone → OnixBoostTG route_address.
+    /// YouTube / Twitch → one media HY2 process (:17890 + PAC). Never stops Telegram.
     /// </summary>
-    private async Task RebuildServiceTunnelAsync(
+    private async Task RebuildMediaTunnelAsync(
         CancellationToken ct,
         bool forceYoutube = false,
         bool forceTwitch = false)
     {
         var wantYt = forceYoutube || _youtubeOn;
-        var wantTg = _telegramOn;
         var wantTwitch = forceTwitch || _twitchOn;
 
         // Drop leftover Media winws DPI from 2.8.89 experiments — HY2 owns YT/Twitch now.
         try { await _picker.StopGamesAsync(); } catch { }
 
-        if (!wantYt && !wantTg && !wantTwitch)
+        if (!wantYt && !wantTwitch)
         {
-            if (_youtubeTunnelOwned || _telegramTunnelOwned || _twitchTunnelOwned || _tunnel.IsRunning)
+            if (_youtubeTunnelOwned || _twitchTunnelOwned || _tunnelMedia.IsRunning)
             {
-                try { await _tunnel.StopAsync(); } catch { }
+                try { await _tunnelMedia.StopAsync(); } catch { }
                 _youtubeTunnelOwned = false;
-                _telegramTunnelOwned = false;
                 _twitchTunnelOwned = false;
             }
             return;
         }
 
         ct.ThrowIfCancellationRequested();
-
-        // Avoid bouncing a healthy TG-only tunnel when nothing media-related changed.
-        if (!wantYt && !wantTwitch && wantTg &&
-            _tunnel.IsRunning && _tunnel.IsTelegramOnly)
-        {
-            _telegramTunnelOwned = true;
-            _youtubeTunnelOwned = false;
-            _twitchTunnelOwned = false;
-            return;
-        }
-
-        Log($"Tunnel: YT={wantYt} TG={wantTg} Twitch={wantTwitch} discordExcl={_discordOn}");
-        await _tunnel.StartServiceTunnelAsync(wantYt, wantTg, wantTwitch, excludeDiscordCidrs: _discordOn);
+        Log($"Media tunnel: YT={wantYt} Twitch={wantTwitch} (TG process untouched)");
+        await _tunnelMedia.StartMediaAsync(wantYt, wantTwitch);
         _youtubeTunnelOwned = wantYt;
         _twitchTunnelOwned = wantTwitch;
-        _telegramTunnelOwned = wantTg;
         await Task.Delay(500, ct);
     }
 
+    /// <summary>Telegram → separate OnixBoostTG HY2 process. Never stops media.</summary>
     private async Task RebuildTelegramTunnelAsync(CancellationToken ct, bool force = false)
     {
         if (force)
             _telegramOn = true;
-        await RebuildServiceTunnelAsync(ct);
+
+        try { await _picker.StopGamesAsync(); } catch { }
+
+        if (!_telegramOn)
+        {
+            if (_telegramTunnelOwned || _tunnelTg.IsRunning)
+            {
+                try { await _tunnelTg.StopAsync(); } catch { }
+                _telegramTunnelOwned = false;
+            }
+            return;
+        }
+
+        ct.ThrowIfCancellationRequested();
+
+        if (_tunnelTg.IsRunning && _tunnelTg.IsTelegramOnly && !force)
+        {
+            _telegramTunnelOwned = true;
+            return;
+        }
+
+        Log("Telegram tunnel: start (media process untouched)");
+        await _tunnelTg.StartTelegramAsync();
+        _telegramTunnelOwned = true;
+        await Task.Delay(500, ct);
     }
+
+    /// <summary>Legacy alias — media cards only (Telegram has its own rebuild).</summary>
+    private Task RebuildServiceTunnelAsync(
+        CancellationToken ct,
+        bool forceYoutube = false,
+        bool forceTwitch = false) =>
+        RebuildMediaTunnelAsync(ct, forceYoutube, forceTwitch);
 
     private async Task ToggleYoutubeTunnelAsync()
     {
@@ -1226,7 +1246,7 @@ public partial class MainWindow : Window
             _youtubeOn = false;
             _youtubeTunnelOwned = false;
             RefreshCards();
-            try { await RebuildServiceTunnelAsync(CancellationToken.None); } catch { }
+            try { await RebuildMediaTunnelAsync(CancellationToken.None); } catch { }
             UpdateStatusUi(EngineAlive);
             RefreshCards();
             RefreshHealthSummary();
@@ -1251,8 +1271,8 @@ public partial class MainWindow : Window
                 ct.ThrowIfCancellationRequested();
                 try
                 {
-                    await RebuildServiceTunnelAsync(ct, forceYoutube: true);
-                    if (_tunnel.IsRunning) { last = null; break; }
+                    await RebuildMediaTunnelAsync(ct, forceYoutube: true);
+                    if (_tunnelMedia.IsRunning) { last = null; break; }
                     last = new InvalidOperationException("туннель не стартовал");
                 }
                 catch (OperationCanceledException) { throw; }
@@ -1263,7 +1283,7 @@ public partial class MainWindow : Window
                 }
                 await Task.Delay(400 * attempt, ct);
             }
-            if (last != null || !_tunnel.IsRunning)
+            if (last != null || !_tunnelMedia.IsRunning)
                 throw last ?? new InvalidOperationException("туннель не стартовал");
 
             await Task.Delay(500, ct);
@@ -1289,7 +1309,7 @@ public partial class MainWindow : Window
             _youtubeConnecting = false;
             if (!_youtubeOn)
             {
-                try { await RebuildServiceTunnelAsync(CancellationToken.None); } catch { }
+                try { await RebuildMediaTunnelAsync(CancellationToken.None); } catch { }
             }
             RefreshCards();
             StatusText.Text = "Таймаут YouTube";
@@ -1301,7 +1321,7 @@ public partial class MainWindow : Window
             _youtubeConnecting = false;
             _youtubeOn = false;
             _youtubeTunnelOwned = false;
-            try { await RebuildServiceTunnelAsync(CancellationToken.None); } catch { }
+            try { await RebuildMediaTunnelAsync(CancellationToken.None); } catch { }
             if (_discordOn)
                 _ = SoftRepairDiscordAfterTunnelAsync(CancellationToken.None);
             RefreshCards();
@@ -1433,7 +1453,7 @@ public partial class MainWindow : Window
                     throw;
                 }
 
-                if (!_tunnel.IsRunning)
+                if (!_tunnelTg.IsRunning)
                 {
                     _telegramOn = false;
                     Log($"Telegram tunnel down (round {round})");
@@ -1500,17 +1520,17 @@ public partial class MainWindow : Window
     }
 
     private async Task EnsureGamesTunnelIfNeededAsync(CancellationToken ct) =>
-        await RebuildServiceTunnelAsync(ct);
+        await RebuildMediaTunnelAsync(ct);
 
     private async Task EnsureTelegramTunnelIfNeededAsync(CancellationToken ct) =>
-        await RebuildServiceTunnelAsync(ct);
+        await RebuildTelegramTunnelAsync(ct);
 
     private async Task TurnOffTelegramAsync(bool alreadyCleared = false)
     {
         if (!alreadyCleared)
             _telegramOn = false;
         _telegramTunnelOwned = false;
-        try { await RebuildServiceTunnelAsync(CancellationToken.None); } catch { }
+        try { await RebuildTelegramTunnelAsync(CancellationToken.None); } catch { }
 
         UpdateStatusUi(EngineAlive);
         RefreshCards();

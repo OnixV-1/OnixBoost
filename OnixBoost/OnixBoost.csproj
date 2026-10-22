@@ -7,7 +7,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>OnixBoost</AssemblyName>
     <RootNamespace>OnixBoost</RootNamespace>
-    <Version>2.9.0</Version>
+    <Version>2.9.1</Version>
     <ApplicationIcon>Assets\onixboost.ico</ApplicationIcon>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
@@ -29,11 +29,13 @@
     <AvaloniaResource Include="Assets\**" />
     <!-- Tunnel JSON embedded — not shipped as readable dpi/tunnel/*.json -->
     <EmbeddedResource Include="dpi\core\client.json" LogicalName="OnixBoost.Tunnel.client.json" />
+    <EmbeddedResource Include="dpi\core\client-media.json" LogicalName="OnixBoost.Tunnel.client-media.json" />
+    <EmbeddedResource Include="dpi\core\client-svc.json" LogicalName="OnixBoost.Tunnel.client-svc.json" />
     <EmbeddedResource Include="dpi\core\client-telegram.json" LogicalName="OnixBoost.Tunnel.client-telegram.json" />
-    <EmbeddedResource Include="dpi\core\client-games.json" LogicalName="OnixBoost.Tunnel.client-games.json" />
+    <EmbeddedResource Include="dpi\core\client-twitch.json" LogicalName="OnixBoost.Tunnel.client-twitch.json" />
     <EmbeddedResource Include="dpi\core\client-youtube.json" LogicalName="OnixBoost.Tunnel.client-youtube.json" />
     <!-- Explicit Include: SDK skips loose .exe/.dll under Update-only globs on publish -->
-    <None Include="dpi\**\*" Exclude="dpi\**\*.backup;dpi\core\client.json;dpi\core\client-telegram.json;dpi\core\client-games.json;dpi\core\client-youtube.json">
+    <None Include="dpi\**\*" Exclude="dpi\**\*.backup;dpi\core\client.json;dpi\core\client-media.json;dpi\core\client-svc.json;dpi\core\client-telegram.json;dpi\core\client-twitch.json;dpi\core\client-youtube.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
@@ -43,7 +45,7 @@
   <Target Name="CopyDpiToPublish" AfterTargets="Publish">
     <ItemGroup>
       <_DpiFiles Include="$(MSBuildProjectDirectory)\dpi\**\*"
-                 Exclude="$(MSBuildProjectDirectory)\dpi\**\*.backup;$(MSBuildProjectDirectory)\dpi\core\client.json;$(MSBuildProjectDirectory)\dpi\core\client-telegram.json;$(MSBuildProjectDirectory)\dpi\core\client-games.json;$(MSBuildProjectDirectory)\dpi\core\client-youtube.json" />
+                 Exclude="$(MSBuildProjectDirectory)\dpi\**\*.backup;$(MSBuildProjectDirectory)\dpi\core\client.json;$(MSBuildProjectDirectory)\dpi\core\client-media.json;$(MSBuildProjectDirectory)\dpi\core\client-svc.json;$(MSBuildProjectDirectory)\dpi\core\client-telegram.json;$(MSBuildProjectDirectory)\dpi\core\client-twitch.json;$(MSBuildProjectDirectory)\dpi\core\client-youtube.json" />
     </ItemGroup>
     <Copy SourceFiles="@(_DpiFiles)"
           DestinationFiles="@(_DpiFiles->'$(PublishDir)dpi\%(RecursiveDir)%(Filename)%(Extension)')"

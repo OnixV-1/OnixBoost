@@ -1,6 +1,6 @@
 {
-  "version": "2.9.0",
+  "version": "2.9.1",
   "url": "https://github.com/OnixV-1/OnixBoost/releases/latest/download/OnixBoost-Setup.exe",
   "zip": "https://github.com/OnixV-1/OnixBoost/releases/latest/download/OnixBoost-Update.zip",
-  "notes": "OnixBoost 2.9.0\n\nDiscord Soft: стабильный запуск и подключение без лишних правок профиля.\n\n• Discord Soft — автоподбор рабочей стратегии\n• Discord Soft — сброс устаревшей сохранённой стратегии\n• YouTube / Twitch / Telegram — без изменений\n\nОбновление: STOP → Обновить → Soft Discord → дождитесь подбора → Discord."
+  "notes": "OnixBoost 2.9.1\n\nНезависимые процессы: Telegram и YouTube/Twitch больше не гасят друг друга.\n\n• Telegram — отдельный HY2 (OnixBoostTG)\n• YouTube / Twitch — отдельный media HY2 + PAC (без глобального ProxyEnable)\n• Discord Soft — без изменений (Flowseal 1.10.3)\n\nОбновление: STOP → Обновить → включите нужные карточки. Можно держать TG и YouTube одновременно."
 }

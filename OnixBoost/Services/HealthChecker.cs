@@ -118,10 +118,38 @@ public sealed class HealthChecker
         return (false, sw.ElapsedMilliseconds, lastFail ?? "YouTube unreachable");
     }
 
-    public async Task<(bool Ok, long Ms, string Detail)> CheckSteamStrictAsync(CancellationToken ct = default)
-        => await CheckGamesStrictAsync(ct);
+    public async Task<(bool Ok, long Ms, string Detail)> CheckTwitchStrictAsync(CancellationToken ct = default)
+    {
+        var sw = Stopwatch.StartNew();
+        string? lastFail = null;
+        foreach (var (url, label) in new[]
+                 {
+                     ("https://www.twitch.tv/", "twitch"),
+                     ("https://gql.twitch.tv/gql", "gql"),
+                 })
+        {
+            try
+            {
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(HttpTimeout);
+                using var http = new HttpClient { Timeout = HttpTimeout };
+                using var resp = await http.GetAsync(url, cts.Token);
+                var code = (int)resp.StatusCode;
+                if (code >= 200 && code < 500)
+                    return (true, sw.ElapsedMilliseconds, label + " " + code);
+                lastFail = label + " HTTP " + code;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex)
+            {
+                lastFail = label + " " + ex.GetType().Name;
+            }
+        }
+        sw.Stop();
+        return (false, sw.ElapsedMilliseconds, lastFail ?? "Twitch unreachable");
+    }
 
-    /// <summary>Steam OR popular launchers. During strategy sweep (fast) — Steam+Epic only.</summary>
+    /// <summary>Legacy Games probes (unused Soft card). Kept for StrategyAutoPicker cleanup paths.</summary>
     public async Task<(bool Ok, long Ms, string Detail)> CheckGamesStrictAsync(
         CancellationToken ct = default, bool fast = false)
     {
@@ -233,8 +261,7 @@ public sealed class HealthChecker
             {
                 BoostTarget.Discord => await CheckDiscordStrictAsync(token),
                 BoostTarget.Youtube => await CheckYoutubeStrictAsync(token),
-                BoostTarget.Steam => await CheckGamesStrictAsync(token, fast: fastFail),
-                BoostTarget.DiscordSteam => await CheckDiscordAndGamesAsync(token),
+                BoostTarget.Twitch => await CheckTwitchStrictAsync(token),
                 BoostTarget.Telegram => await CheckTelegramStrictAsync(token),
                 _ => await CheckDiscordStrictAsync(token)
             };

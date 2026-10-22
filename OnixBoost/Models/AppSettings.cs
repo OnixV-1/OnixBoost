@@ -8,7 +8,7 @@ public sealed class AppSettings
     /// <summary>Last Flowseal strategy per target.</summary>
     public string? LastFlowsealDiscord { get; set; }
     public string? LastFlowsealYoutube { get; set; }
-    public string? LastFlowsealSteam { get; set; }
+    public string? LastFlowsealTwitch { get; set; }
     public string? LastFlowsealBoth { get; set; }
     /// <summary>Legacy; migrated to LastFlowsealDiscord.</summary>
     public string? LastFlowsealStrategy { get; set; }

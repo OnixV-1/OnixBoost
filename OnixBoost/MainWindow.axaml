@@ -156,14 +156,14 @@
         </Button>
       </Border>
 
-      <Border x:Name="CardSteam" Grid.Column="2" Classes="svcCard" Background="#171A21" Margin="3,0">
-        <Button Classes="cardHit" Click="OnBoostSteam">
+      <Border x:Name="CardTwitch" Grid.Column="2" Classes="svcCard" Background="#9146FF" Margin="3,0">
+        <Button Classes="cardHit" Click="OnBoostTwitch">
           <StackPanel Spacing="14" HorizontalAlignment="Center">
-            <Image Source="/Assets/icon-steam.png" Width="56" Height="56" HorizontalAlignment="Center" Stretch="Uniform"/>
-            <TextBlock Text="Games" FontSize="16" FontWeight="Bold" Foreground="White"
+            <Image Source="/Assets/icon-twitch.png" Width="56" Height="56" HorizontalAlignment="Center" Stretch="Uniform"/>
+            <TextBlock Text="Twitch" FontSize="16" FontWeight="Bold" Foreground="White"
                        HorizontalAlignment="Center" TextAlignment="Center"/>
-            <Path x:Name="SpinSteam" Classes="cardSpin"/>
-            <TextBlock x:Name="LabelSteam" Text="" FontSize="11" FontWeight="SemiBold"
+            <Path x:Name="SpinTwitch" Classes="cardSpin"/>
+            <TextBlock x:Name="LabelTwitch" Text="" FontSize="11" FontWeight="SemiBold"
                        Foreground="#FFFFFFCC" HorizontalAlignment="Center" TextAlignment="Center"/>
           </StackPanel>
         </Button>

@@ -74,13 +74,18 @@ def main() -> int:
 
     for must, blob, label in (
         ("AppendMixedInboundToHy2", store, "store"),
+        ("ScrubRuntimeLeaf", store, "store"),
         ("EnableMediaPac", engine, "engine"),
         ("DisableMediaPac", engine, "engine"),
+        ("TunnelKind", engine, "engine"),
         ("FindProxyForURL", proxy, "pac"),
         ("ProxyEnable", proxy, "pac"),
         ("PacHttpPort", proxy, "pac"),
         ("http://127.0.0.1", proxy, "pac"),
-        ("RebuildServiceTunnelAsync", mw, "main"),
+        ("RebuildMediaTunnelAsync", mw, "main"),
+        ("RebuildTelegramTunnelAsync", mw, "main"),
+        ("_tunnelMedia", mw, "main"),
+        ("_tunnelTg", mw, "main"),
     ):
         if must not in blob:
             fail(f"missing {must} in {label}")
@@ -90,6 +95,33 @@ def main() -> int:
         fail("PAC must not rely on file:// only")
     else:
         ok("PAC served over http://127.0.0.1")
+
+    # PAC must not force ProxyEnable=1 (that couples Telegram Desktop into mixed proxy)
+    enable_fn = proxy.find("public static void EnableMediaPac")
+    disable_fn = proxy.find("public static void DisableMediaPac")
+    if enable_fn < 0 or disable_fn < 0:
+        fail("EnableMediaPac/DisableMediaPac missing")
+    else:
+        body = proxy[enable_fn:disable_fn]
+        if 'SetValue("ProxyEnable", 1' in body or "ProxyEnable\", 1" in body:
+            fail("EnableMediaPac must not set ProxyEnable=1 (breaks TG independence)")
+        else:
+            ok("PAC-only (no ProxyEnable=1)")
+        if "no ProxyEnable" not in body and 'SetValue("ProxyEnable", 0' not in body:
+            fail("EnableMediaPac should clear/disable ProxyEnable")
+        else:
+            ok("ProxyEnable forced off for media PAC")
+
+    # Process independence: StopAsync must not KillCoreWorkers (sibling HY2)
+    stop = engine.find("public Task StopAsync")
+    if stop < 0:
+        fail("TunnelEngine.StopAsync missing")
+    else:
+        stop_body = engine[stop : stop + 1200]
+        if "KillCoreWorkers" in stop_body:
+            fail("StopAsync must not KillCoreWorkers (kills sibling HY2)")
+        else:
+            ok("StopAsync is PID-scoped (no KillCoreWorkers)")
 
     # Must not call selective Google TUN path for media anymore as primary
     if "ApplySelectiveRouteAddress" in store and "MaterializeService" in store:
@@ -101,6 +133,10 @@ def main() -> int:
             fail("MaterializeService still uses ApplySelectiveRouteAddress (TUN catch risk)")
         else:
             ok("MaterializeService is proxy-path (no selective Google TUN)")
+        if "AppendTelegramTunInbound" in body or "AppendTelegramCidrs" in body:
+            fail("MaterializeService must not merge Telegram TUN into media process")
+        else:
+            ok("MaterializeService has no Telegram merge")
 
     if "await RebuildMediaDpiAsync" in mw:
         fail("MainWindow still calls RebuildMediaDpiAsync")
