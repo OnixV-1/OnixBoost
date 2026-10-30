@@ -1,6 +1,10 @@
 {
-  "version": "2.9.3",
-  "url": "https://github.com/OnixV-1/OnixBoost/releases/download/v2.9.3/OnixBoost-Setup.exe",
-  "zip": "https://github.com/OnixV-1/OnixBoost/releases/download/v2.9.3/OnixBoost-Update.zip",
-  "notes": "OnixBoost 2.9.3\n\nDiscord Soft: надёжный probe gateway (больше не soft-ONLINE без доступа), спокойный watchdog без thrashing, без очистки кэша Discord при каждом включении.\n\nПосле обновления: STOP → Обновить → Discord Soft."
+  "version": "2.9.4",
+  "url": "https://github.com/OnixV-1/OnixBoost/releases/download/v2.9.4/OnixBoost-Setup.exe",
+  "zip": "https://github.com/OnixV-1/OnixBoost/releases/download/v2.9.4/OnixBoost-Update.zip",
+  "mirrors": [
+    "http://85.137.63.156/onixboost",
+    "http://85.137.63.156:8891"
+  ],
+  "notes": "OnixBoost 2.9.4\n\nНадёжное обновление: несколько зеркал (HTTP :80 + :8891 + GitHub), докачка при обрыве, сначала компактный Update.zip. Кнопка Обновить сама перебирает зеркала — ничего скачивать вручную не нужно.\n\nПосле обновления: STOP → Обновить."
 }

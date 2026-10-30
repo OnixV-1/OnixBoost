@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
@@ -17,26 +19,39 @@ public sealed record UpdateInfo(
     string Version,
     string SetupUrl,
     string? ZipUrl,
-    string? Notes);
+    string? Notes,
+    IReadOnlyList<string>? Mirrors = null);
 
 /// <summary>
-/// In-app update: download Setup → schedule install AFTER this process exits → quit.
-/// Never runs Setup while OnixBoost.exe still holds Program Files locks.
-/// Tries several download mirrors; GitHub is always a fallback.
+/// In-app update: multi-mirror download → install after exit.
+/// Prefer ISP-friendly CDN (HTTP :80), then :8891, then GitHub (+ public proxies).
+/// Users should never need to open a browser.
 /// </summary>
 public static class AppUpdateChecker
 {
     public const string RepoOwner = "OnixV-1";
     public const string RepoName = "OnixBoost";
     public const string ReleasesLatest = "https://github.com/OnixV-1/OnixBoost/releases/latest";
-    /// <summary>Private NL mirror omitted from public source; updates use GitHub.</summary>
-    public const string NlBase = "";
-    private const string NlManifestUrl = GhManifestUrl;
+
+    /// <summary>Primary CDN — port 80 path (most ISPs allow).</summary>
+    public const string NlHttp80 = "http://85.137.63.156/onixboost";
+    /// <summary>Legacy CDN port.</summary>
+    public const string NlHttp8891 = "http://85.137.63.156:8891";
+
+    private static readonly string[] BuiltInMirrors =
+    {
+        NlHttp80,
+        NlHttp8891,
+    };
+
+    private const string NlManifestUrl = NlHttp80 + "/version.json";
+    private const string NlManifestUrlLegacy = NlHttp8891 + "/version.json";
     private const string ApiLatest = "https://api.github.com/repos/OnixV-1/OnixBoost/releases/latest";
     private const string GhManifestUrl = "https://raw.githubusercontent.com/OnixV-1/OnixBoost/main/version.json";
     private const string SetupAssetName = "OnixBoost-Setup.exe";
     private const string ZipAssetName = "OnixBoost-Update.zip";
-    private static readonly TimeSpan PerUrlTimeout = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan PerUrlTimeout = TimeSpan.FromMinutes(12);
+    private static readonly TimeSpan HeadProbeTimeout = TimeSpan.FromSeconds(6);
 
     private static readonly HttpClient Http = CreateHttp();
 
@@ -68,7 +83,6 @@ public static class AppUpdateChecker
         }
         catch { }
 
-        // leftover *.old from Setup overwrite
         try
         {
             foreach (var f in Directory.EnumerateFiles(AppPaths.Root, "*.old", SearchOption.AllDirectories))
@@ -81,16 +95,19 @@ public static class AppUpdateChecker
 
     public static async Task<UpdateInfo?> CheckAsync(CancellationToken ct = default)
     {
-        try
+        foreach (var manifest in new[] { NlManifestUrl, NlManifestUrlLegacy })
         {
-            var fromNl = await TryManifestAsync(NlManifestUrl, ct);
-            if (fromNl != null && IsNewer(fromNl.Version, CurrentVersion))
+            try
             {
-                LogLine("update available via NL " + fromNl.Version);
-                return fromNl;
+                var fromNl = await TryManifestAsync(manifest, ct);
+                if (fromNl != null && IsNewer(fromNl.Version, CurrentVersion))
+                {
+                    LogLine("update available via " + HostOf(manifest) + " " + fromNl.Version);
+                    return fromNl;
+                }
             }
+            catch (Exception ex) { LogLine("check NL " + HostOf(manifest) + ": " + ex.Message); }
         }
-        catch (Exception ex) { LogLine("check NL: " + ex.Message); }
 
         try
         {
@@ -117,66 +134,74 @@ public static class AppUpdateChecker
         CancellationToken ct = default)
     {
         LogLine($"apply start cur={CurrentVersion} dst={info.Version} setup={info.SetupUrl} zip={info.ZipUrl}");
-        progress?.Report("Скачивание…");
 
-        var setupPath = Path.Combine(Path.GetTempPath(), SetupAssetName);
         Exception? last = null;
-
-        foreach (var url in SetupUrlCandidates(info))
+        // Two full passes over all mirrors — covers flaky mobile/ISP drops
+        for (var pass = 1; pass <= 2; pass++)
         {
             ct.ThrowIfCancellationRequested();
-            try
+            if (pass > 1)
             {
-                progress?.Report(LabelForUrl(url));
-                await DownloadFileAsync(url, setupPath, progress, ct);
-                var len = new FileInfo(setupPath).Length;
-                LogLine($"setup ok bytes={len} from={HostOf(url)}");
-                if (len < 5_000_000)
-                    throw new InvalidOperationException($"Setup битый ({len} байт)");
+                progress?.Report("Повтор скачивания…");
+                LogLine("apply pass " + pass);
+                await Task.Delay(1200, ct);
+            }
 
-                TryUnblockFile(setupPath);
-                progress?.Report("Подготовка…");
-                await Task.Yield();
-                await Task.Run(() => ScheduleSetupAfterExit(setupPath), ct);
-                LogLine("scheduled setup after exit");
-                progress?.Report("Готово — закрытие…");
-                return;
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            // Prefer Update.zip (≈80 MB) before Setup (≈150 MB) — less to pull on bad links
+            foreach (var zipUrl in await OrderUrlsAsync(ZipUrlCandidates(info), ct))
             {
-                last = ex;
-                LogLine($"setup download/schedule fail host={HostOf(url)}: {ex.Message}");
-                try { if (File.Exists(setupPath)) File.Delete(setupPath); } catch { }
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    progress?.Report(LabelForUrl(zipUrl));
+                    await ApplyZipViaStagingAsync(zipUrl, progress, ct);
+                    LogLine("zip staging scheduled from " + HostOf(zipUrl));
+                    return;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    last = ex;
+                    LogLine("zip fail host=" + HostOf(zipUrl) + ": " + ex.Message);
+                    progress?.Report("Другое зеркало…");
+                }
             }
-        }
 
-        // Last resort: zip staging (also multi-URL), still applied after exit
-        progress?.Report("Запасной вариант…");
-        foreach (var zipUrl in ZipUrlCandidates(info))
-        {
-            ct.ThrowIfCancellationRequested();
-            try
+            var setupPath = Path.Combine(Path.GetTempPath(), SetupAssetName);
+            foreach (var url in await OrderUrlsAsync(SetupUrlCandidates(info), ct))
             {
-                await ApplyZipViaStagingAsync(zipUrl, progress, ct);
-                LogLine("zip staging scheduled from " + HostOf(zipUrl));
-                return;
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                last = ex;
-                LogLine("zip fail host=" + HostOf(zipUrl) + ": " + ex.Message);
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    progress?.Report(LabelForUrl(url));
+                    await DownloadFileAsync(url, setupPath, progress, ct, minBytes: 5_000_000);
+                    var len = new FileInfo(setupPath).Length;
+                    LogLine($"setup ok bytes={len} from={HostOf(url)}");
+                    if (len < 5_000_000)
+                        throw new InvalidOperationException($"Setup битый ({len} байт)");
+
+                    TryUnblockFile(setupPath);
+                    progress?.Report("Подготовка…");
+                    await Task.Yield();
+                    await Task.Run(() => ScheduleSetupAfterExit(setupPath), ct);
+                    LogLine("scheduled setup after exit");
+                    progress?.Report("Готово — закрытие…");
+                    return;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    last = ex;
+                    LogLine($"setup fail host={HostOf(url)}: {ex.Message}");
+                    try { if (File.Exists(setupPath)) File.Delete(setupPath); } catch { }
+                    progress?.Report("Другое зеркало…");
+                }
             }
         }
 
         throw new InvalidOperationException(
-            "Не удалось скачать обновление. Откройте Releases на GitHub и поставьте Setup вручную.",
+            "Не удалось скачать обновление. Нажмите «Обновить» ещё раз — приложение само переберёт зеркала.",
             last);
     }
 
-    /// <summary>
-    /// Detached watcher: wait until OnixBoost.exe is gone, then run Setup /silent.
-    /// Must be started BEFORE Shutdown() so it inherits admin token.
-    /// </summary>
     private static void ScheduleSetupAfterExit(string setupPath)
     {
         var bat = Path.Combine(Path.GetTempPath(), "onixboost-run-setup.cmd");
@@ -184,7 +209,6 @@ public static class AppUpdateChecker
         var pid = Environment.ProcessId;
         static string Q(string p) => "\"" + p.Replace("\"", "") + "\"";
 
-        // Wait by PID only — dpi/core workers are also named OnixBoost.exe and must not block Setup
         File.WriteAllText(bat, $"""
             @echo off
             setlocal EnableExtensions
@@ -204,8 +228,6 @@ public static class AppUpdateChecker
             del /F /Q "%~f0" >nul 2>&1
             """, Encoding.ASCII);
 
-        // Detach watcher: `start` returns immediately so we never block on the wait-loop bat.
-        // Child still inherits admin token from elevated OnixBoost (no second UAC).
         var psi = new ProcessStartInfo
         {
             FileName = "cmd.exe",
@@ -230,7 +252,7 @@ public static class AppUpdateChecker
         var exePath = Path.Combine(root, "OnixBoost.exe");
 
         progress?.Report("Скачивание…");
-        await DownloadFileAsync(zipUrl, tmpZip, progress, ct);
+        await DownloadFileAsync(zipUrl, tmpZip, progress, ct, minBytes: 1_000_000);
         var zipLen = new FileInfo(tmpZip).Length;
         LogLine($"zip downloaded bytes={zipLen}");
         if (zipLen < 1_000_000)
@@ -275,7 +297,6 @@ public static class AppUpdateChecker
             start "" "%EXE%"
             del /F /Q "%~f0" >nul 2>&1
             """);
-        // Detach: outer cmd exits immediately; watcher keeps running
         var psi = new ProcessStartInfo
         {
             FileName = "cmd.exe",
@@ -289,31 +310,76 @@ public static class AppUpdateChecker
             throw new InvalidOperationException("Не удалось запустить скрипт обновления");
     }
 
-    private static async Task DownloadFileAsync(string url, string dest, IProgress<string>? progress, CancellationToken ct)
+    private static async Task DownloadFileAsync(
+        string url, string dest, IProgress<string>? progress, CancellationToken ct, long minBytes)
     {
         Exception? last = null;
-        for (var attempt = 1; attempt <= 2; attempt++)
+        for (var attempt = 1; attempt <= 3; attempt++)
         {
             try
             {
                 if (attempt > 1)
-                    progress?.Report("Повтор…");
+                    progress?.Report($"Повтор {attempt}/3…");
                 LogLine($"download try={attempt} host={HostOf(url)}");
+
+                long existing = 0;
+                if (File.Exists(dest))
+                {
+                    try { existing = new FileInfo(dest).Length; } catch { existing = 0; }
+                    if (existing > 0 && existing < minBytes)
+                        LogLine($"resume from {existing} bytes");
+                    else if (existing >= minBytes)
+                    {
+                        // leftover complete-looking file — start fresh
+                        try { File.Delete(dest); } catch { }
+                        existing = 0;
+                    }
+                }
 
                 using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 linked.CancelAfter(PerUrlTimeout);
 
                 using var req = new HttpRequestMessage(HttpMethod.Get, url);
                 req.Headers.TryAddWithoutValidation("Accept", "application/octet-stream,*/*");
+                if (existing > 0)
+                    req.Headers.Range = new RangeHeaderValue(existing, null);
+
                 using var resp = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, linked.Token);
-                LogLine($"http {(int)resp.StatusCode} len={resp.Content.Headers.ContentLength} host={HostOf(url)}");
+                LogLine($"http {(int)resp.StatusCode} len={resp.Content.Headers.ContentLength} host={HostOf(url)} resume={existing}");
+
+                var partial = (int)resp.StatusCode == 206;
+                if ((int)resp.StatusCode == 416)
+                {
+                    try { File.Delete(dest); } catch { }
+                    existing = 0;
+                    throw new InvalidOperationException("Range not satisfiable — restart");
+                }
+
+                if (!partial && existing > 0 && resp.IsSuccessStatusCode)
+                {
+                    // Server ignored Range — rewrite from scratch
+                    existing = 0;
+                    try { File.Delete(dest); } catch { }
+                }
+
                 resp.EnsureSuccessStatusCode();
 
-                var total = resp.Content.Headers.ContentLength ?? -1;
+                var contentLen = resp.Content.Headers.ContentLength ?? -1;
+                var total = partial && contentLen >= 0 ? existing + contentLen
+                    : contentLen >= 0 ? contentLen
+                    : -1;
+
                 await using var src = await resp.Content.ReadAsStreamAsync(linked.Token);
-                await using var dst = File.Create(dest);
+                await using var dst = new FileStream(
+                    dest,
+                    existing > 0 && partial ? FileMode.Append : FileMode.Create,
+                    FileAccess.Write,
+                    FileShare.None,
+                    256 * 1024,
+                    useAsync: true);
+
                 var buf = new byte[256 * 1024];
-                long read = 0;
+                long read = existing;
                 int n;
                 var lastPct = -1;
                 while ((n = await src.ReadAsync(buf.AsMemory(0, buf.Length), linked.Token)) > 0)
@@ -334,24 +400,64 @@ public static class AppUpdateChecker
                 }
                 await dst.FlushAsync(linked.Token);
                 progress?.Report("Скачивание 100%");
-                if (read < 1_000_000)
+                if (read < minBytes)
                     throw new InvalidOperationException($"Скачано только {read} байт");
                 return;
             }
-            catch (Exception ex) when (attempt < 2 && ex is not OperationCanceledException)
+            catch (Exception ex) when (attempt < 3 && ex is not OperationCanceledException)
             {
                 last = ex;
                 LogLine($"download fail try={attempt}: {ex.Message}");
-                await Task.Delay(800 * attempt, ct);
+                await Task.Delay(700 * attempt, ct);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
                 last = new TimeoutException("Таймаут скачивания (" + PerUrlTimeout.TotalMinutes + " мин)");
                 LogLine(last.Message + " host=" + HostOf(url));
-                break; // next URL
+                break;
             }
         }
         throw last ?? new InvalidOperationException("Скачивание не удалось");
+    }
+
+    /// <summary>HEAD-probe mirrors; reachable ones first (by latency).</summary>
+    private static async Task<List<string>> OrderUrlsAsync(IEnumerable<string> urls, CancellationToken ct)
+    {
+        var list = urls.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (list.Count <= 1) return list;
+
+        var scored = new List<(string url, long ms, bool ok)>();
+        foreach (var url in list)
+        {
+            ct.ThrowIfCancellationRequested();
+            var sw = Stopwatch.StartNew();
+            try
+            {
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                linked.CancelAfter(HeadProbeTimeout);
+                using var req = new HttpRequestMessage(HttpMethod.Head, url);
+                using var resp = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, linked.Token);
+                sw.Stop();
+                var ok = resp.IsSuccessStatusCode || (int)resp.StatusCode is 405 or 501;
+                // Some CDNs reject HEAD — treat as soft-ok if not 4xx/5xx connection fail
+                if (!ok && (int)resp.StatusCode >= 400 && (int)resp.StatusCode < 500)
+                    ok = false;
+                scored.Add((url, sw.ElapsedMilliseconds, ok || (int)resp.StatusCode == 200));
+                LogLine($"probe {(ok ? "ok" : "soft")} {HostOf(url)} {sw.ElapsedMilliseconds}ms {(int)resp.StatusCode}");
+            }
+            catch (Exception ex)
+            {
+                sw.Stop();
+                scored.Add((url, 60_000 + sw.ElapsedMilliseconds, false));
+                LogLine($"probe fail {HostOf(url)}: {ex.GetType().Name}");
+            }
+        }
+
+        return scored
+            .OrderByDescending(x => x.ok)
+            .ThenBy(x => x.ms)
+            .Select(x => x.url)
+            .ToList();
     }
 
     private static IEnumerable<string> SetupUrlCandidates(UpdateInfo info)
@@ -361,13 +467,20 @@ public static class AppUpdateChecker
         {
             if (string.IsNullOrWhiteSpace(u)) return;
             if (list.Exists(x => string.Equals(x, u, StringComparison.OrdinalIgnoreCase))) return;
-            list.Add(u);
+            list.Add(u!);
         }
+
         Add(info.SetupUrl);
-        if (!string.IsNullOrWhiteSpace(NlBase))
-            Add(NlBase.TrimEnd('/') + "/" + SetupAssetName);
-        Add($"https://github.com/{RepoOwner}/{RepoName}/releases/download/v{Normalize(info.Version)}/{SetupAssetName}");
+        foreach (var m in MirrorBases(info))
+            Add(m.TrimEnd('/') + "/" + SetupAssetName);
+
+        var ver = Normalize(info.Version);
+        var gh = $"https://github.com/{RepoOwner}/{RepoName}/releases/download/v{ver}/{SetupAssetName}";
+        Add(gh);
         Add($"https://github.com/{RepoOwner}/{RepoName}/releases/latest/download/{SetupAssetName}");
+        // Public GitHub download proxies (help when github.com is throttled)
+        Add("https://ghfast.top/" + gh);
+        Add("https://mirror.ghproxy.com/" + gh);
         return list;
     }
 
@@ -378,26 +491,53 @@ public static class AppUpdateChecker
         {
             if (string.IsNullOrWhiteSpace(u)) return;
             if (list.Exists(x => string.Equals(x, u, StringComparison.OrdinalIgnoreCase))) return;
-            list.Add(u);
+            list.Add(u!);
         }
+
         Add(info.ZipUrl);
-        if (!string.IsNullOrWhiteSpace(NlBase))
-            Add(NlBase.TrimEnd('/') + "/" + ZipAssetName);
-        Add($"https://github.com/{RepoOwner}/{RepoName}/releases/download/v{Normalize(info.Version)}/{ZipAssetName}");
+        foreach (var m in MirrorBases(info))
+            Add(m.TrimEnd('/') + "/" + ZipAssetName);
+
+        var ver = Normalize(info.Version);
+        var gh = $"https://github.com/{RepoOwner}/{RepoName}/releases/download/v{ver}/{ZipAssetName}";
+        Add(gh);
         Add($"https://github.com/{RepoOwner}/{RepoName}/releases/latest/download/{ZipAssetName}");
+        Add("https://ghfast.top/" + gh);
+        Add("https://mirror.ghproxy.com/" + gh);
         return list;
+    }
+
+    private static IEnumerable<string> MirrorBases(UpdateInfo info)
+    {
+        var set = new List<string>();
+        void Add(string? m)
+        {
+            if (string.IsNullOrWhiteSpace(m)) return;
+            m = m.Trim().TrimEnd('/');
+            if (set.Exists(x => string.Equals(x, m, StringComparison.OrdinalIgnoreCase))) return;
+            set.Add(m);
+        }
+
+        if (info.Mirrors != null)
+            foreach (var m in info.Mirrors) Add(m);
+        foreach (var m in BuiltInMirrors) Add(m);
+        return set;
     }
 
     private static string LabelForUrl(string url)
     {
-        if (url.Contains("github", StringComparison.OrdinalIgnoreCase))
-            return "Скачивание (GitHub)…";
+        if (url.Contains("github", StringComparison.OrdinalIgnoreCase) ||
+            url.Contains("ghproxy", StringComparison.OrdinalIgnoreCase) ||
+            url.Contains("ghfast", StringComparison.OrdinalIgnoreCase))
+            return "Скачивание (зеркало)…";
+        if (url.Contains(":8891", StringComparison.Ordinal))
+            return "Скачивание…";
         return "Скачивание…";
     }
 
     private static string HostOf(string url)
     {
-        try { return new Uri(url).Host; }
+        try { return new Uri(url).Host + (new Uri(url).IsDefaultPort ? "" : ":" + new Uri(url).Port); }
         catch { return "?"; }
     }
 
@@ -452,7 +592,7 @@ public static class AppUpdateChecker
         }
         setupUrl ??= $"https://github.com/{RepoOwner}/{RepoName}/releases/download/{tag}/{SetupAssetName}";
         var notes = root.TryGetProperty("body", out var body) ? body.GetString() : null;
-        return new UpdateInfo(ver, setupUrl, zipUrl, notes);
+        return new UpdateInfo(ver, setupUrl, zipUrl, notes, BuiltInMirrors);
     }
 
     private static async Task<UpdateInfo?> TryManifestAsync(string manifestUrl, CancellationToken ct)
@@ -464,17 +604,27 @@ public static class AppUpdateChecker
         var setupUrl = doc.RootElement.TryGetProperty("url", out var u)
             ? u.GetString()
             : null;
-        if (string.IsNullOrWhiteSpace(setupUrl) && !string.IsNullOrWhiteSpace(NlBase))
-            setupUrl = NlBase.TrimEnd('/') + "/" + SetupAssetName;
-        setupUrl ??= $"https://github.com/{RepoOwner}/{RepoName}/releases/latest/download/{SetupAssetName}";
+        setupUrl ??= NlHttp80 + "/" + SetupAssetName;
         string? zipUrl = null;
         if (doc.RootElement.TryGetProperty("zip", out var z))
             zipUrl = z.GetString();
-        if (string.IsNullOrWhiteSpace(zipUrl) && !string.IsNullOrWhiteSpace(NlBase))
-            zipUrl = NlBase.TrimEnd('/') + "/" + ZipAssetName;
-        zipUrl ??= $"https://github.com/{RepoOwner}/{RepoName}/releases/latest/download/{ZipAssetName}";
+        zipUrl ??= NlHttp80 + "/" + ZipAssetName;
         var notes = doc.RootElement.TryGetProperty("notes", out var n) ? n.GetString() : null;
-        return new UpdateInfo(ver, setupUrl!, zipUrl, notes);
+
+        var mirrors = new List<string>();
+        if (doc.RootElement.TryGetProperty("mirrors", out var mArr) && mArr.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var el in mArr.EnumerateArray())
+            {
+                var s = el.GetString();
+                if (!string.IsNullOrWhiteSpace(s)) mirrors.Add(s!);
+            }
+        }
+        foreach (var b in BuiltInMirrors)
+            if (!mirrors.Contains(b, StringComparer.OrdinalIgnoreCase))
+                mirrors.Add(b);
+
+        return new UpdateInfo(ver, setupUrl!, zipUrl, notes, mirrors);
     }
 
     private static void LogLine(string msg)
@@ -510,10 +660,10 @@ public static class AppUpdateChecker
             MaxAutomaticRedirections = 15,
             AutomaticDecompression = DecompressionMethods.All,
             PooledConnectionLifetime = TimeSpan.FromMinutes(2),
-            ConnectTimeout = TimeSpan.FromSeconds(20)
+            ConnectTimeout = TimeSpan.FromSeconds(25)
         };
-        var c = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan }; // per-URL CTS
-        c.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "OnixBoost-Updater/2.8");
+        var c = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+        c.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "OnixBoost-Updater/2.9");
         return c;
     }
 }

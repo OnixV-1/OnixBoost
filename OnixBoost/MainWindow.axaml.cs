@@ -354,12 +354,12 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             Log("Update ERROR: " + ex);
-            StatusText.Text = "Ошибка обновления — ставьте Setup вручную";
-            StatusText.Foreground = new SolidColorBrush(Color.Parse("#FF5A64"));
+            // Keep «Обновить» — user taps again; updater re-probes all mirrors (no browser).
+            StatusText.Text = "Сеть оборвалась — нажмите Обновить ещё раз";
+            StatusText.Foreground = new SolidColorBrush(Color.Parse("#F5A524"));
             UpdateBtn.Content = "Обновить " + (_pendingUpdate?.Version ?? "");
             UpdateBtn.IsEnabled = true;
             _updateBusy = false;
-            try { AppUpdateChecker.OpenReleasesInBrowser(); } catch { }
         }
     }
 
