@@ -1,6 +1,6 @@
 {
-  "version": "2.9.2",
-  "url": "https://github.com/OnixV-1/OnixBoost/releases/latest/download/OnixBoost-Setup.exe",
-  "zip": "https://github.com/OnixV-1/OnixBoost/releases/latest/download/OnixBoost-Update.zip",
-  "notes": "OnixBoost 2.9.2\n\nDiscord Soft: Flowseal 1.10.4 (новые TLS-фейки ALT11/12/EXP/SIMPLE FAKE ALT2, обновлённый IPSet).\n\nПосле обновления: STOP → Обновить → включите Discord Soft заново (стратегия подберётся с SIMPLE FAKE)."
+  "version": "2.9.3",
+  "url": "https://github.com/OnixV-1/OnixBoost/releases/download/v2.9.3/OnixBoost-Setup.exe",
+  "zip": "https://github.com/OnixV-1/OnixBoost/releases/download/v2.9.3/OnixBoost-Update.zip",
+  "notes": "OnixBoost 2.9.3\n\nDiscord Soft: надёжный probe gateway (больше не soft-ONLINE без доступа), спокойный watchdog без thrashing, без очистки кэша Discord при каждом включении.\n\nПосле обновления: STOP → Обновить → Discord Soft."
 }

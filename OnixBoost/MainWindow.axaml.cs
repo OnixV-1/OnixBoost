@@ -70,8 +70,8 @@ public partial class MainWindow : Window
 
     /// <summary>Hard cap so «Подключение» cannot hang for minutes (22×2 slow probes).</summary>
     private static readonly TimeSpan DpiOpDeadline = TimeSpan.FromSeconds(75);
-    /// <summary>Discord may soft-retry several sweeps before giving up.</summary>
-    private static readonly TimeSpan DiscordOpDeadline = TimeSpan.FromSeconds(140);
+    /// <summary>Discord Soft: up to ~14 strategies × settle+probe across 2 rounds.</summary>
+    private static readonly TimeSpan DiscordOpDeadline = TimeSpan.FromSeconds(200);
 
     /// <summary>Cancel previous Discord op (if any) and start a new CTS. Does not touch Telegram/Games/YT.</summary>
     private (CancellationToken Ct, int Gen) BeginOp()
@@ -870,13 +870,12 @@ public partial class MainWindow : Window
             await EnsureSessionPreparedAsync(ct, killOtherWorkers: !_twitchOn && !_youtubeOn && !_telegramOn);
             await SyncDiscordIpsQuietAsync(ct);
 
-            if (!_discordOn)
-                await Task.Run(TryClearDiscordCache, ct);
+            // Do NOT wipe Discord Cache here — forces "Checking for updates…" and races Soft.
 
             // Games is HY2 — never merge games_main into Discord winws.
             const bool withGames = false;
 
-            const int maxRounds = 3;
+            const int maxRounds = 2;
             for (var round = 1; round <= maxRounds; round++)
             {
                 ct.ThrowIfCancellationRequested();
@@ -884,7 +883,7 @@ public partial class MainWindow : Window
                 {
                     Log($"Discord: повтор {round}/{maxRounds}…");
                     SetStatusProgress($"Подключение · {round}", "#4DA3FF");
-                    await Task.Delay(600 * round, ct);
+                    await Task.Delay(800 * round, ct);
                 }
 
                 // 1) Reuse last known strategy
@@ -900,27 +899,27 @@ public partial class MainWindow : Window
                         lastFile = reuseFile;
                         lastSid = _dpiStrategyId ?? GetPrefer(BoostTarget.Discord) ?? "reuse";
                         lastTitle = _dpiStrategyTitle ?? lastSid;
-                        await Task.Delay(450, ct);
-                        if (await AcceptComboAsync(true, false, false, ct, retries: 2))
+                        await Task.Delay(900, ct);
+                        if (await AcceptComboAsync(true, false, false, ct, retries: 3))
                         {
                             await FinishDiscordOnlineAsync(ct, lastSid, reuseFile, lastTitle, probeOk: true);
                             return;
                         }
-                        Log("Discord reuse: probe soft — continue sweep");
+                        Log("Discord reuse: probe fail — continue sweep");
                     }
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex) { Log("Discord reuse: " + ex.Message); }
                 }
 
-                // 2) Flowseal sweep
+                // 2) Flowseal sweep — ONLINE only after real gateway OK
                 Log($"Discord: стратегии (r{round})…");
                 var prefer = GetPrefer(BoostTarget.Discord);
                 var (sid, stitle, sfile) = await _picker.FindWorkingDiscordAsync(
-                    Log, ct, prefer, maxStrategies: 8,
+                    Log, ct, prefer, maxStrategies: 14,
                     status: _ => SetStatusProgress("Подключение…", "#4DA3FF"),
                     gamesAlsoOn: false);
 
-                if (sid != null)
+                if (sid != null && !string.IsNullOrEmpty(sfile))
                 {
                     lastSid = sid;
                     lastTitle = stitle ?? sid;
@@ -928,47 +927,65 @@ public partial class MainWindow : Window
                     if (await AcceptComboAsync(true, false, false, ct, retries: 2))
                     {
                         SavePrefer(BoostTarget.Discord, sid);
-                        await FinishDiscordOnlineAsync(ct, sid, sfile ?? "", stitle ?? sid, probeOk: true);
+                        await FinishDiscordOnlineAsync(ct, sid, sfile, stitle ?? sid, probeOk: true);
                         return;
                     }
-                    // Strategy started but gateway probe flaky — keep winws, soft ONLINE
-                    Log("Discord: winws up, probe soft — ONLINE + автопочинка");
+                    // FindWorking already confirmed gateway — accept soft confirm flake once
+                    Log("Discord: gateway was OK in sweep — ONLINE");
                     SavePrefer(BoostTarget.Discord, sid);
-                    await FinishDiscordOnlineAsync(ct, sid, sfile ?? "", stitle ?? sid, probeOk: false);
+                    await FinishDiscordOnlineAsync(ct, sid, sfile, stitle ?? sid, probeOk: true);
                     return;
                 }
             }
 
-            // Last resort: keep preferred strategy running if we had one this session
+            // Last chance: restart last candidate and require real gateway (no fake ONLINE)
             if (!string.IsNullOrEmpty(lastFile))
             {
                 try
                 {
                     await _picker.StartDiscordAsync(lastFile, gamesAlsoOn: false);
-                    Log("Discord: last strategy kept — ONLINE + автопочинка");
-                    await FinishDiscordOnlineAsync(ct, lastSid ?? "retry", lastFile, lastTitle ?? "retry", probeOk: false);
-                    return;
+                    await Task.Delay(1000, ct);
+                    var lastProbe = await _health.CheckTargetAsync(BoostTarget.Discord, ct, fastFail: false);
+                    if (lastProbe.Ok)
+                    {
+                        Log($"Discord last-chance OK ({lastProbe.Ms} ms)");
+                        await FinishDiscordOnlineAsync(ct, lastSid ?? "retry", lastFile, lastTitle ?? "retry",
+                            probeOk: true);
+                        return;
+                    }
+                    Log($"Discord last-chance fail: {lastProbe.Detail}");
                 }
                 catch (OperationCanceledException) { throw; }
-                catch (Exception ex) { Log("Discord last-resort: " + ex.Message); }
+                catch (Exception ex) { Log("Discord last-chance: " + ex.Message); }
             }
 
+            try { await _picker.StopDiscordAsync(); } catch { }
             await FailDpiConnectAsync(false, "Discord");
         }
         catch (OperationCanceledException)
         {
             if (!IsCurrentOp(gen)) return;
-            // Deadline hit but we already have a strategy — soft ONLINE instead of «таймаут»
-            if (!string.IsNullOrEmpty(lastFile) || !string.IsNullOrEmpty(_dpiStrategyFile))
+            // Deadline: only ONLINE if gateway really answers
+            var file = lastFile ?? _dpiStrategyFile;
+            if (!string.IsNullOrEmpty(file))
             {
-                var file = lastFile ?? _dpiStrategyFile!;
-                var sid = lastSid ?? _dpiStrategyId ?? "timeout";
-                var title = lastTitle ?? _dpiStrategyTitle ?? sid;
-                try { await _picker.StartDiscordAsync(file, gamesAlsoOn: false); } catch { }
-                Log("Discord: deadline — soft ONLINE + автопочинка");
-                await FinishDiscordOnlineAsync(CancellationToken.None, sid, file, title, probeOk: false);
-                return;
+                try
+                {
+                    await _picker.StartDiscordAsync(file, gamesAlsoOn: false);
+                    await Task.Delay(800, CancellationToken.None);
+                    var p = await _health.CheckTargetAsync(BoostTarget.Discord, CancellationToken.None, fastFail: false);
+                    if (p.Ok)
+                    {
+                        var sid = lastSid ?? _dpiStrategyId ?? "timeout";
+                        var title = lastTitle ?? _dpiStrategyTitle ?? sid;
+                        Log($"Discord: deadline but gateway OK ({p.Ms} ms)");
+                        await FinishDiscordOnlineAsync(CancellationToken.None, sid, file, title, probeOk: true);
+                        return;
+                    }
+                }
+                catch { }
             }
+            try { await _picker.StopDiscordAsync(); } catch { }
             Log("Discord: таймаут/отмена");
             if (!_discordOn) _intentDiscord = false;
             SetBusy(null);
@@ -980,19 +997,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             if (!IsCurrentOp(gen)) return;
-            // Prefer soft ONLINE over red error if winws strategy exists
-            if (!string.IsNullOrEmpty(lastFile))
-            {
-                try
-                {
-                    await _picker.StartDiscordAsync(lastFile, gamesAlsoOn: false);
-                    Log("Discord error soft → ONLINE: " + ex.Message);
-                    await FinishDiscordOnlineAsync(CancellationToken.None,
-                        lastSid ?? "err", lastFile, lastTitle ?? "err", probeOk: false);
-                    return;
-                }
-                catch { }
-            }
+            try { await _picker.StopDiscordAsync(); } catch { }
             if (!_discordOn) _intentDiscord = false;
             SetBusy(null);
             RefreshCards();
@@ -1011,10 +1016,12 @@ public partial class MainWindow : Window
         StartDiscordWatchdog();
         if (!probeOk)
             Log("Discord ONLINE (soft) — watchdog will recheck");
+        else
+            Log("Discord ONLINE — gateway OK");
     }
 
     /// <summary>
-    /// While Discord card is ON: if gateway dies, restart winws / re-sweep without user toggle.
+    /// While Discord card is ON: if gateway dies for real, restart winws without thrashing Discord TLS.
     /// </summary>
     private void StartDiscordWatchdog()
     {
@@ -1027,19 +1034,33 @@ public partial class MainWindow : Window
 
     private async Task DiscordWatchLoopAsync(CancellationToken ct, int gen)
     {
+        var consecutiveFails = 0;
         try
         {
+            // Let Discord finish "Checking for updates" before first probe
+            await Task.Delay(TimeSpan.FromSeconds(40), ct);
             while (!ct.IsCancellationRequested && gen == Volatile.Read(ref _discordWatchGen))
             {
-                await Task.Delay(TimeSpan.FromSeconds(22), ct);
                 if (!_discordOn || gen != Volatile.Read(ref _discordWatchGen))
                     break;
 
                 var d = await _health.CheckTargetAsync(BoostTarget.Discord, ct, fastFail: true);
                 if (d.Ok)
+                {
+                    consecutiveFails = 0;
+                    await Task.Delay(TimeSpan.FromSeconds(35), ct);
                     continue;
+                }
 
-                Log($"Discord watchdog: down ({d.Detail}) — repair…");
+                consecutiveFails++;
+                if (consecutiveFails < 2)
+                {
+                    Log($"Discord watchdog: soft fail ({d.Detail}) — wait");
+                    await Task.Delay(TimeSpan.FromSeconds(12), ct);
+                    continue;
+                }
+
+                Log($"Discord watchdog: down ×{consecutiveFails} ({d.Detail}) — repair…");
                 SetStatusProgress("Подключение", "#4DA3FF");
 
                 var repaired = false;
@@ -1048,12 +1069,13 @@ public partial class MainWindow : Window
                     try
                     {
                         await _picker.StartDiscordAsync(_dpiStrategyFile, gamesAlsoOn: false);
-                        await Task.Delay(500, ct);
-                        var again = await _health.CheckTargetAsync(BoostTarget.Discord, ct, fastFail: true);
+                        await Task.Delay(900, ct);
+                        var again = await _health.CheckTargetAsync(BoostTarget.Discord, ct, fastFail: false);
                         if (again.Ok)
                         {
                             Log($"Discord watchdog OK reuse ({again.Ms} ms)");
                             repaired = true;
+                            consecutiveFails = 0;
                         }
                     }
                     catch (OperationCanceledException) { throw; }
@@ -1066,7 +1088,7 @@ public partial class MainWindow : Window
                     {
                         var prefer = GetPrefer(BoostTarget.Discord);
                         var (sid, stitle, sfile) = await _picker.FindWorkingDiscordAsync(
-                            Log, ct, prefer, maxStrategies: 6,
+                            Log, ct, prefer, maxStrategies: 10,
                             status: _ => SetStatusProgress("Подключение…", "#4DA3FF"),
                             gamesAlsoOn: false);
                         if (sid != null && !string.IsNullOrEmpty(sfile))
@@ -1075,6 +1097,7 @@ public partial class MainWindow : Window
                             RememberDpiStrategy(sid, sfile, stitle ?? sid);
                             Log($"Discord watchdog OK sweep: {stitle}");
                             repaired = true;
+                            consecutiveFails = 0;
                         }
                     }
                     catch (OperationCanceledException) { throw; }
@@ -1085,9 +1108,12 @@ public partial class MainWindow : Window
                 {
                     UpdateStatusUi(true);
                     RefreshCards();
+                    RefreshHealthSummary();
                     if (!repaired)
-                        Log("Discord watchdog: still soft — will retry");
+                        Log("Discord watchdog: still down — will retry");
                 }
+
+                await Task.Delay(TimeSpan.FromSeconds(repaired ? 35 : 18), ct);
             }
         }
         catch (OperationCanceledException) { }

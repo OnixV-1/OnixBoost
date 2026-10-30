@@ -216,7 +216,7 @@ public sealed class StrategyAutoPicker
         Action<string> log,
         CancellationToken ct,
         string? preferId = null,
-        int maxStrategies = 8,
+        int maxStrategies = 14,
         Action<string>? status = null,
         bool gamesAlsoOn = false)
     {
@@ -258,14 +258,29 @@ public sealed class StrategyAutoPicker
             try
             {
                 await StartDiscordAsync(file, gamesAlsoOn: false);
-                await Task.Delay(preferred ? 280 : 160, ct);
+                // WinDivert needs settle time before gateway TLS succeeds
+                await Task.Delay(preferred ? 900 : 650, ct);
                 var h = await _health.CheckTargetAsync(BoostTarget.Discord, ct, fastFail: true);
+                if (!h.Ok && preferred)
+                {
+                    // Prefer: one slow retry before giving up on saved strategy
+                    await Task.Delay(700, ct);
+                    h = await _health.CheckTargetAsync(BoostTarget.Discord, ct, fastFail: false);
+                }
                 if (h.Ok)
                 {
-                    log($"OK: {title} ({h.Ms} ms) — {h.Detail}");
-                    return (id, title, file);
+                    // Confirm once without fastFail so Soft ONLINE is real
+                    await Task.Delay(250, ct);
+                    var confirm = await _health.CheckTargetAsync(BoostTarget.Discord, ct, fastFail: false);
+                    if (confirm.Ok)
+                    {
+                        log($"OK: {title} ({confirm.Ms} ms) — {confirm.Detail}");
+                        return (id, title, file);
+                    }
+                    log($"  soft-ok then fail ({confirm.Ms} ms): {confirm.Detail}");
                 }
-                log($"  fail ({h.Ms} ms): {h.Detail}");
+                else
+                    log($"  fail ({h.Ms} ms): {h.Detail}");
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)

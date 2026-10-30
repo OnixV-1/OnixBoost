@@ -38,7 +38,10 @@ public sealed class HealthChecker
     };
 
     private static readonly TimeSpan HttpTimeout = TimeSpan.FromSeconds(2.5);
+    /// <summary>Generic fast sweep (YT/Twitch). Too short for Discord gateway (DNS+TLS).</summary>
     private static readonly TimeSpan SweepFailTimeout = TimeSpan.FromMilliseconds(900);
+    /// <summary>Discord Soft sweep/watchdog — gateway needs DoH + TLS, 900ms always cancels.</summary>
+    private static readonly TimeSpan DiscordSweepFailTimeout = TimeSpan.FromMilliseconds(3200);
     private static readonly TimeSpan DohTimeout = TimeSpan.FromSeconds(2);
 
     public async Task<HealthResult> CheckAsync(CancellationToken ct = default, bool? engineAlive = null)
@@ -252,8 +255,11 @@ public sealed class HealthChecker
         BoostTarget target, CancellationToken ct = default, bool fastFail = false)
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var sweepCap = target == BoostTarget.Discord
+            ? DiscordSweepFailTimeout
+            : SweepFailTimeout;
         if (fastFail)
-            linked.CancelAfter(SweepFailTimeout);
+            linked.CancelAfter(sweepCap);
         var token = linked.Token;
         try
         {
@@ -268,7 +274,7 @@ public sealed class HealthChecker
         }
         catch (OperationCanceledException) when (fastFail && !ct.IsCancellationRequested)
         {
-            return (false, (long)SweepFailTimeout.TotalMilliseconds, "TaskCanceledException");
+            return (false, (long)sweepCap.TotalMilliseconds, "TaskCanceledException");
         }
     }
 
