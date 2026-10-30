@@ -1,0 +1,261 @@
+# Popular launchers / CDNs — RF-blocked / GearUP-style PC catalog (non-Steam).
+# Steam is intentionally NOT here — DPI on Steam breaks the store (see list-exclude).
+# Sources: medvedeff-true/ru-gaming-blocklist, surge games.list, GearUP catalog.
+
+# Epic / Fortnite / EOS
+epicgames.com
+*.epicgames.com
+*.epicgames.dev
+epicgames.net
+*.epicgames.net
+fortnite.com
+*.fortnite.com
+easyanticheat.net
+*.easyanticheat.net
+unrealengine.com
+*.unrealengine.com
+
+# Riot / Valorant / LoL
+riotgames.com
+*.riotgames.com
+riotcdn.net
+*.riotcdn.net
+valorant.com
+*.valorant.com
+leagueoflegends.com
+*.leagueoflegends.com
+pvp.net
+*.pvp.net
+
+# Battle.net / Blizzard / Activision / CoD
+battle.net
+*.battle.net
+blizzard.com
+*.blizzard.com
+*.blizzard.tv
+activision.com
+*.activision.com
+activisionblizzard.com
+callofduty.com
+*.callofduty.com
+battlefield.com
+*.battlefield.com
+
+# EA / Origin / Apex / Respawn
+ea.com
+*.ea.com
+origin.com
+*.origin.com
+apexlegends.com
+*.apexlegends.com
+respawn.com
+*.respawn.com
+
+# Ubisoft
+ubisoft.com
+*.ubisoft.com
+ubi.com
+*.ubi.com
+uplay.com
+
+# Rockstar / GTA
+rockstargames.com
+*.rockstargames.com
+socialclub.rockstargames.com
+
+# Roblox
+roblox.com
+*.roblox.com
+*.rbxcdn.com
+
+# miHoYo / HoYoverse / Kuro
+mihoyo.com
+*.mihoyo.com
+hoyoverse.com
+*.hoyoverse.com
+*.yuanshen.com
+*.hoyolab.com
+kurogame.com
+*.kurogame.com
+wutheringwaves.com
+*.wutheringwaves.com
+hg-cdn.com
+*.hg-cdn.com
+
+# NCSOFT / PURPLE / Aion — Games card uses HY2 (client-games.json), not this DPI list.
+
+# Predecessor / Omeda / Pragma
+omeda.city
+*.omeda.city
+playpredecessor.com
+*.playpredecessor.com
+predecessorgame.com
+*.predecessorgame.com
+omedastudios.com
+*.omedastudios.com
+pragmaengine.com
+*.pragmaengine.com
+pragmaplayer.com
+*.pragmaplayer.com
+
+# Anti-cheat / overlays / publishers
+battleye.com
+*.battleye.com
+nexon.com
+*.nexon.com
+nexon.co.jp
+garena.com
+*.garena.com
+boosteroid.com
+faceit.com
+*.faceit.com
+
+# 2K
+2k.com
+*.2k.com
+2kgames.com
+*.2kgames.com
+2ksports.com
+
+# Warner / Mortal Kombat
+wbgames.com
+*.wbgames.com
+netherrealm.com
+*.netherrealm.com
+
+# Dead by Daylight
+bhvrdbd.com
+*.bhvrdbd.com
+deadbydaylight.com
+*.deadbydaylight.com
+
+# Warframe
+warframe.com
+*.warframe.com
+
+# VRChat
+vrchat.com
+*.vrchat.com
+vrchat.cloud
+*.vrchat.cloud
+
+# Minecraft / Mojang
+minecraft.net
+*.minecraft.net
+mojang.com
+*.mojang.com
+modrinth.com
+*.modrinth.com
+curseforge.com
+*.curseforge.com
+
+# Photon / multiplayer backends
+exitgames.com
+*.exitgames.com
+photonengine.com
+*.photonengine.com
+photonengine.io
+*.photonengine.io
+
+# osu!
+ppy.sh
+*.ppy.sh
+
+# Fatshark / Darktide / Vermintide
+fatsharkgames.se
+*.fatsharkgames.se
+
+# Arknights / Hypergryph
+gryphline.com
+*.gryphline.com
+hypergryph.com
+*.hypergryph.com
+
+# Unity backends (many indie / mobile PC ports)
+unity3d.com
+*.unity3d.com
+
+# Xbox Live / Game Pass services
+xboxlive.com
+*.xboxlive.com
+xbox.com
+*.xbox.com
+
+# GOG
+gog.com
+*.gog.com
+
+# Square Enix / Capcom / Bandai
+square-enix.com
+*.square-enix.com
+capcom.com
+*.capcom.com
+bandainamcoent.com
+*.bandainamcoent.com
+
+# Facepunch / Rust
+facepunch.com
+*.facepunch.com
+
+# Path of Exile
+pathofexile.com
+*.pathofexile.com
+grindinggear.com
+*.grindinggear.com
+
+# Destiny / Bungie
+bungie.net
+*.bungie.net
+
+# Gaijin / War Thunder
+gaijin.net
+*.gaijin.net
+warthunder.com
+*.warthunder.com
+
+# Wargaming
+wargaming.net
+*.wargaming.net
+
+# Escape from Tarkov
+escapefromtarkov.com
+*.escapefromtarkov.com
+battlestategames.com
+*.battlestategames.com
+
+# Bohemia / DayZ / Arma
+bohemia.net
+*.bohemia.net
+bistudio.com
+*.bistudio.com
+dayz.com
+*.dayz.com
+arma3.com
+*.arma3.com
+armaplatform.com
+*.armaplatform.com
+
+# Magic: The Gathering Arena
+mtgarena.com
+*.mtgarena.com
+wizards.com
+*.wizards.com
+
+# Gearbox
+gearbox.com
+*.gearbox.com
+
+# Nintendo / Sony online (launcher / store APIs)
+nintendo.com
+*.nintendo.com
+nintendo.net
+*.nintendo.net
+playstation.com
+*.playstation.com
+sonyentertainmentnetwork.com
+
+# Tencent / common CN PC backends (when used by RF-blocked titles)
+tencent.com
+*.tencent.com
+qtlglb.com
+*.qtlglb.com

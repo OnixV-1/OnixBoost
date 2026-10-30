@@ -1,0 +1,15 @@
+twitch.tv
+www.twitch.tv
+m.twitch.tv
+twitchcdn.net
+ext-twitch.tv
+assets.twitch.tv
+gql.twitch.tv
+jtvnw.net
+ttvnw.net
+ttcdn.net
+live-video.net
+twitch-live.s3.amazonaws.com
+static.twitchcdn.net
+clips-media-assets2.twitch.tv
+vod-secure.twitch.tv

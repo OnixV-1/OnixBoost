@@ -196,12 +196,12 @@ def write_order(tag: str, strategies: list[tuple[str, str, str]]) -> None:
 def main() -> int:
     import sys
 
-    fs = Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/flowseal-1103/zapret-discord-youtube-1.10.3")
+    fs = Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/flowseal-1104/zapret-discord-youtube-1.10.4")
     if not fs.is_dir():
         print("FAIL: Flowseal root missing:", fs)
         return 1
 
-    tag = fs.name.replace("zapret-discord-youtube-", "") or "1.10.3"
+    tag = fs.name.replace("zapret-discord-youtube-", "") or "1.10.4"
     strategies: list[tuple[str, str, str]] = []
     ARGS.mkdir(parents=True, exist_ok=True)
 

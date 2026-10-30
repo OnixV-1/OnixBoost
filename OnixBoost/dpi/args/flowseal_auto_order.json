@@ -1,0 +1,162 @@
+{
+  "version": "1.10.4",
+  "profile": "vanilla-gamefilter-disabled",
+  "order": [
+    "flowseal_simple_fake",
+    "flowseal_simple_fake_alt",
+    "flowseal_simple_fake_alt2",
+    "flowseal_alt13",
+    "flowseal_alt9",
+    "flowseal_alt11",
+    "flowseal_alt3",
+    "flowseal_alt10",
+    "flowseal_alt12",
+    "flowseal_alt",
+    "flowseal_fake_tls_auto_alt3",
+    "flowseal_fake_tls_auto",
+    "flowseal_general",
+    "flowseal_alt6",
+    "flowseal_alt5",
+    "flowseal_fake_tls_auto_alt",
+    "flowseal_alt7",
+    "flowseal_alt4",
+    "flowseal_fake_tls_auto_alt2",
+    "flowseal_alt2",
+    "flowseal_alt8",
+    "flowseal_exp"
+  ],
+  "strategies": [
+    {
+      "id": "flowseal_simple_fake",
+      "title": "Flowseal SIMPLE FAKE",
+      "name": "SIMPLE FAKE",
+      "file": "flowseal_simple_fake.txt"
+    },
+    {
+      "id": "flowseal_simple_fake_alt",
+      "title": "Flowseal SIMPLE FAKE ALT",
+      "name": "SIMPLE FAKE ALT",
+      "file": "flowseal_simple_fake_alt.txt"
+    },
+    {
+      "id": "flowseal_simple_fake_alt2",
+      "title": "Flowseal SIMPLE FAKE ALT2",
+      "name": "SIMPLE FAKE ALT2",
+      "file": "flowseal_simple_fake_alt2.txt"
+    },
+    {
+      "id": "flowseal_alt13",
+      "title": "Flowseal ALT13",
+      "name": "ALT13",
+      "file": "flowseal_alt13.txt"
+    },
+    {
+      "id": "flowseal_alt9",
+      "title": "Flowseal ALT9",
+      "name": "ALT9",
+      "file": "flowseal_alt9.txt"
+    },
+    {
+      "id": "flowseal_alt11",
+      "title": "Flowseal ALT11",
+      "name": "ALT11",
+      "file": "flowseal_alt11.txt"
+    },
+    {
+      "id": "flowseal_alt3",
+      "title": "Flowseal ALT3",
+      "name": "ALT3",
+      "file": "flowseal_alt3.txt"
+    },
+    {
+      "id": "flowseal_alt10",
+      "title": "Flowseal ALT10",
+      "name": "ALT10",
+      "file": "flowseal_alt10.txt"
+    },
+    {
+      "id": "flowseal_alt12",
+      "title": "Flowseal ALT12",
+      "name": "ALT12",
+      "file": "flowseal_alt12.txt"
+    },
+    {
+      "id": "flowseal_alt",
+      "title": "Flowseal ALT",
+      "name": "ALT",
+      "file": "flowseal_alt.txt"
+    },
+    {
+      "id": "flowseal_fake_tls_auto_alt3",
+      "title": "Flowseal FAKE TLS AUTO ALT3",
+      "name": "FAKE TLS AUTO ALT3",
+      "file": "flowseal_fake_tls_auto_alt3.txt"
+    },
+    {
+      "id": "flowseal_fake_tls_auto",
+      "title": "Flowseal FAKE TLS AUTO",
+      "name": "FAKE TLS AUTO",
+      "file": "flowseal_fake_tls_auto.txt"
+    },
+    {
+      "id": "flowseal_general",
+      "title": "Flowseal GENERAL",
+      "name": "GENERAL",
+      "file": "flowseal_general.txt"
+    },
+    {
+      "id": "flowseal_alt6",
+      "title": "Flowseal ALT6",
+      "name": "ALT6",
+      "file": "flowseal_alt6.txt"
+    },
+    {
+      "id": "flowseal_alt5",
+      "title": "Flowseal ALT5",
+      "name": "ALT5",
+      "file": "flowseal_alt5.txt"
+    },
+    {
+      "id": "flowseal_fake_tls_auto_alt",
+      "title": "Flowseal FAKE TLS AUTO ALT",
+      "name": "FAKE TLS AUTO ALT",
+      "file": "flowseal_fake_tls_auto_alt.txt"
+    },
+    {
+      "id": "flowseal_alt7",
+      "title": "Flowseal ALT7",
+      "name": "ALT7",
+      "file": "flowseal_alt7.txt"
+    },
+    {
+      "id": "flowseal_alt4",
+      "title": "Flowseal ALT4",
+      "name": "ALT4",
+      "file": "flowseal_alt4.txt"
+    },
+    {
+      "id": "flowseal_fake_tls_auto_alt2",
+      "title": "Flowseal FAKE TLS AUTO ALT2",
+      "name": "FAKE TLS AUTO ALT2",
+      "file": "flowseal_fake_tls_auto_alt2.txt"
+    },
+    {
+      "id": "flowseal_alt2",
+      "title": "Flowseal ALT2",
+      "name": "ALT2",
+      "file": "flowseal_alt2.txt"
+    },
+    {
+      "id": "flowseal_alt8",
+      "title": "Flowseal ALT8",
+      "name": "ALT8",
+      "file": "flowseal_alt8.txt"
+    },
+    {
+      "id": "flowseal_exp",
+      "title": "Flowseal EXP",
+      "name": "EXP",
+      "file": "flowseal_exp.txt"
+    }
+  ]
+}

@@ -143,7 +143,7 @@ def main() -> int:
     else:
         ok("no Media DPI path in MainWindow")
 
-    # Discord Soft = vanilla Flowseal 1.10.3 (no OnixBoost desync rewrites)
+    # Discord Soft = vanilla Flowseal 1.10.4 (no OnixBoost desync rewrites)
     winws = (ROOT / "Services" / "WinwsEngine.cs").read_text(encoding="utf-8")
     start = winws.find("public static List<string> SanitizeForDiscordStream")
     if start < 0:
@@ -160,10 +160,10 @@ def main() -> int:
             ok("no Soften/rewrite helpers on Discord Soft path")
 
     order = json.loads((ROOT / "dpi" / "args" / "flowseal_auto_order.json").read_text(encoding="utf-8"))
-    if order.get("version") != "1.10.3":
-        fail(f"flowseal_auto_order version={order.get('version')}, want 1.10.3")
+    if order.get("version") != "1.10.4":
+        fail(f"flowseal_auto_order version={order.get('version')}, want 1.10.4")
     else:
-        ok("Flowseal strategies version 1.10.3")
+        ok("Flowseal strategies version 1.10.4")
     if order.get("order", [None])[0] != "flowseal_simple_fake":
         fail("Discord Soft sweep must try SIMPLE FAKE first")
     else:

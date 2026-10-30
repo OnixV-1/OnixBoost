@@ -191,7 +191,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// New Flowseal import (vanilla 1.10.3) — drop saved Discord strategy so Soft re-sweeps
+    /// New Flowseal import (vanilla 1.10.4) — drop saved Discord strategy so Soft re-sweeps
     /// from SIMPLE FAKE instead of a broken ALT13 prefer from older Soft rewrites.
     /// </summary>
     private void ResetDiscordPreferIfFlowsealProfileChanged()

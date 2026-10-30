@@ -1,0 +1,44 @@
+# Steam / Valve — used only by steam_main (Games card).
+# Do NOT put these in list-general: Discord FakeSplit breaks CM login (-100).
+# See https://wiki.zapret.moe/Zapret2/steam and Valve required ports FAQ.
+
+steampowered.com
+*.steampowered.com
+steamcommunity.com
+*.steamcommunity.com
+steamstatic.com
+*.steamstatic.com
+steamusercontent.com
+*.steamusercontent.com
+steamcontent.com
+*.steamcontent.com
+steamgames.com
+*.steamgames.com
+steamserver.net
+*.steamserver.net
+steam-api.com
+*.steam-api.com
+steam-chat.com
+*.steam-chat.com
+steam.tv
+*.steam.tv
+steamconnecttest.com
+*.steamconnecttest.com
+valve.net
+*.valve.net
+
+# Common CDN hostnames (parent suffixes above also match)
+api.steampowered.com
+store.steampowered.com
+checkout.steampowered.com
+help.steampowered.com
+login.steampowered.com
+cm.steampowered.com
+cdn.cloudflare.steamstatic.com
+clan.fastly.steamstatic.com
+community.akamai.steamstatic.com
+steamcdn-a.akamaihd.net
+steamuserimages-a.akamaihd.net
+video.akamai.steamstatic.com
+avatars.akamai.steamstatic.com
+broadcast.steamcontent.com
