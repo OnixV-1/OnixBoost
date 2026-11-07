@@ -26,7 +26,7 @@ Windows 10/11.
 </p>
 
 <p>
-  <a href="http://31.42.177.124/onixboost/OnixBoost-Setup.exe"><img alt="Windows Setup" src="https://img.shields.io/badge/Windows%20Setup.exe-2563EB?style=for-the-badge&logo=windows&logoColor=white"></a>
+  <a href="https://github.com/OnixV-1/OnixBoost/releases/latest/download/OnixBoost-Setup.exe"><img alt="Windows Setup" src="https://img.shields.io/badge/Windows%20Setup.exe-2563EB?style=for-the-badge&logo=windows&logoColor=white"></a>
 </p>
 
 <img src="assets/app-ui-285.png" width="880" alt="OnixBoost — Discord, YouTube, Twitch, Telegram">
@@ -77,7 +77,7 @@ Windows 10/11.
 
 ## Установка на Windows
 
-1. Скачайте [Setup.exe](http://31.42.177.124/onixboost/OnixBoost-Setup.exe) (или из [Releases](https://github.com/OnixV-1/OnixBoost/releases)).
+1. Скачайте [Setup.exe](https://github.com/OnixV-1/OnixBoost/releases/latest/download/OnixBoost-Setup.exe) (зеркало CDN: [Setup.exe](http://31.42.177.124/onixboost/OnixBoost-Setup.exe)).
 2. Установите и запустите OnixBoost от имени администратора.
 3. Нажмите нужную карточку и дождитесь статуса **Online**.
 4. Для YouTube / Twitch один раз перезапустите браузер.
