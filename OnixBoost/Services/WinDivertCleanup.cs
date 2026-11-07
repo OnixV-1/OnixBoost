@@ -5,13 +5,13 @@ using System.Threading.Tasks;
 namespace OnixBoost.Services;
 
 /// <summary>
-/// Clears stuck WinDivert / winws handles so .sys updates and restarts succeed.
+/// Clears stuck Soft workers. On Windows also stops WinDivert services.
+/// On Linux tears down nftables NFQUEUE + nfqws.
 /// </summary>
 public static class WinDivertCleanup
 {
     /// <summary>
-    /// Kill winws/WinDivert only. Must NOT kill dpi/core HY2 (YouTube/Telegram) —
-    /// Discord connect used to call KillAllWorkers and race-kill a simultaneous YouTube tunnel.
+    /// Kill Soft DPI only. Must NOT kill dpi/core HY2 (YouTube/Telegram).
     /// </summary>
     public static async Task KillWorkersAsync()
     {
@@ -20,8 +20,11 @@ public static class WinDivertCleanup
             try
             {
                 ProcessNames.KillDpiWorkers();
-                ProcessLocker.KillByName("WinDivert");
-                ProcessLocker.KillByName("goodbyedpi");
+                if (PlatformOs.IsWindows)
+                {
+                    ProcessLocker.KillByName("WinDivert");
+                    ProcessLocker.KillByName("goodbyedpi");
+                }
             }
             catch { }
         });
@@ -29,10 +32,16 @@ public static class WinDivertCleanup
 
     public static async Task RunAsync(IProgress<string>? progress = null)
     {
-        progress?.Report("WinDivert cleanup…");
+        progress?.Report(PlatformOs.IsLinux ? "nfqws cleanup…" : "WinDivert cleanup…");
         await KillWorkersAsync();
 
-        // Named services sometimes left by old packs — wait for STOPPED before delete
+        if (PlatformOs.IsLinux)
+        {
+            try { await LinuxNfqBootstrap.RemoveAllAsync(); } catch { }
+            Logger.Info("nfqws/nft cleanup done");
+            return;
+        }
+
         foreach (var svc in new[] { "WinDivert", "WinDivert1.4", "WinDivert14" })
         {
             try

@@ -1,0 +1,2 @@
+# TCP-only + mild desync when Discord is on (keeps Go Live / voice stable)
+--filter-tcp=80,443 --hostlist=%ROOT%lists\list-steam.txt --hostlist-exclude=%ROOT%lists\list-discord.txt --hostlist-exclude=%ROOT%lists\list-exclude.txt --dpi-desync=fake --dpi-desync-repeats=2 --dpi-desync-cutoff=n2 --dpi-desync-fake-tls=%VBIN%tls_clienthello_www_google_com.bin

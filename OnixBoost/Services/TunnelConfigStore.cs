@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
@@ -16,6 +18,12 @@ namespace OnixBoost.Services;
 public static class TunnelConfigStore
 {
     private static readonly byte[] XorKey = Encoding.UTF8.GetBytes("OnixBoost.Tunnel.v1");
+
+    private static readonly JsonSerializerOptions IndentedJson = new()
+    {
+        WriteIndented = true,
+        TypeInfoResolver = JsonSerializerOptions.Default.TypeInfoResolver
+    };
 
     /// <summary>
     /// Full YouTube surface: SPA dies without gstatic/ggpht/googleusercontent;
@@ -39,11 +47,42 @@ public static class TunnelConfigStore
         "162.159.128.0/17", "104.16.0.0/13", "172.64.0.0/13", "5.200.14.0/24"
     };
 
+    /// <summary>
+    /// Discord voice/RTC fallbacks (own AS + GCP slices used for WebRTC).
+    /// CF-only TUN mutes when Ready hands a 34/35/66.22 UDP endpoint.
+    /// Curated /16s — not GCP /12 dumps (those steal half of Google into OnixBoostDC).
+    /// </summary>
+    private static readonly string[] DiscordVoiceCidrs =
+    {
+        "66.22.0.0/16",
+        "34.0.0.0/16",
+        "34.1.0.0/16",
+        "34.2.0.0/16",
+        "35.207.0.0/16",
+        "35.212.0.0/16",
+        "35.213.0.0/16",
+        "35.214.0.0/16",
+        "35.215.0.0/16",
+        "35.217.0.0/16",
+        "35.219.0.0/16"
+    };
+
     private static readonly string[] TwitchDomains =
     {
         "twitch.tv", "twitchcdn.net", "ext-twitch.tv", "assets.twitch.tv",
         "gql.twitch.tv", "jtvnw.net", "ttvnw.net", "ttcdn.net",
         "live-video.net"
+    };
+
+    /// <summary>Linux Soft fallback (HY2+PAC) when nfqws/nft privileges are missing.</summary>
+    private static readonly string[] DiscordDomains =
+    {
+        "discord.com", "discord.gg", "discordapp.com", "discordapp.net",
+        "discord.media", "discordcdn.com", "discord.gift", "discord.gifts",
+        "discordactivities.com", "discordsays.com", "discordstatus.com",
+        "discord.co", "discord.app", "dis.gd", "gateway.discord.gg",
+        "media.discordapp.net", "images-ext-1.discordapp.net",
+        "discord-activities.com", "discordpartygames.com", "discordmerch.com"
     };
 
     private static readonly string[] TelegramDomains =
@@ -55,18 +94,350 @@ public static class TunnelConfigStore
 
     private static readonly string[] TelegramCidrs =
     {
-        "91.108.4.0/22", "91.108.8.0/22", "91.108.12.0/22", "91.108.16.0/22",
-        "91.108.56.0/22", "149.154.160.0/20", "185.76.151.0/24"
+        // Broad Telegram DC space — narrow /22s miss new pops → HY2 "online" but TG stays direct.
+        // IPv6 required: Telegram Desktop prefers v6; v4-only TUN = ONLINE but "Загрузка...".
+        "91.108.0.0/16",
+        "149.154.160.0/20",
+        "185.76.151.0/24",
+        "95.161.64.0/20",
+        "2001:b28:f23c::/48",
+        "2001:b28:f23d::/48",
+        "2001:b28:f23f::/48",
+        "2001:67c:4e8::/48",
     };
 
-    private static readonly string[] Hy2ServerCidrs = { "85.137.63.156/32" };
+    private static readonly string[] Hy2ServerCidrs = { "194.76.154.176/32" };
+    /// <summary>Canonical HY2 host (FR). Always pinned — stale dpi/core/*.json must not keep dead VSYS/NL2 IPs.</summary>
+    private const string Hy2ServerHost = "194.76.154.176";
+
+    /// <summary>
+    /// Split HY2 listen ports so Discord + Telegram TUNs do not share one QUIC inbound
+    /// (same password + same port under load → voice mute / session flap).
+    /// </summary>
+    // Same split as stable 2.9.4 on NL: Telegram → 3443, media/Discord → 443.
+    private const int Hy2PortTelegram = 3443;
+    private const int Hy2PortDiscord = 443;
 
     /// <summary>Telegram-only TUN: route_address CIDRs, no default-route dump.</summary>
     public static string MaterializeTelegram(string runtimeLeaf)
     {
         var json = ReadEmbeddedOrDisk("client-telegram.json");
+        json = PinTunHy2Outbound(json, Hy2PortTelegram);
+        json = HardenWindowsTelegramTun(json);
         Logger.Info("telegram TUN: client-telegram.json (OnixBoostTG route_address)");
         return WriteRuntime(json, runtimeLeaf);
+    }
+
+    /// <summary>
+    /// Windows Wintun: match stable 2.9.4 stack=system, but drop IPv6 TUN addresses.
+    /// Many Win setups (IPv6 off / broken) die with FATAL start inbound/tun when the
+    /// profile asks for fdfe:…/126 — NL vs FR is irrelevant, create fails locally first.
+    /// </summary>
+    private static string HardenWindowsTelegramTun(string json)
+    {
+        if (!PlatformOs.IsWindows) return json;
+        try
+        {
+            var root = JsonNode.Parse(json);
+            if (root is null) return json;
+            var inbounds = root["inbounds"]?.AsArray();
+            if (inbounds is null) return json;
+            foreach (var n in inbounds)
+            {
+                if (n is not JsonObject tun) continue;
+                if (!string.Equals(tun["type"]?.GetValue<string>(), "tun", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                // Same as 2.9.4
+                tun["stack"] = "system";
+                tun["strict_route"] = false;
+                tun["interface_name"] = "OnixBoostTG";
+
+                // IPv4-only endpoint on the NIC — avoid fdfe:: create failures
+                tun["address"] = new JsonArray("172.19.0.5/30");
+
+                if (tun["route_address"] is JsonArray routes)
+                {
+                    var v4 = new JsonArray();
+                    foreach (var r in routes)
+                    {
+                        var s = r?.GetValue<string>() ?? "";
+                        if (s.Length == 0 || s.Contains(':')) continue;
+                        v4.Add(s);
+                    }
+                    if (v4.Count > 0) tun["route_address"] = v4;
+                }
+
+                var excludes = new JsonArray();
+                foreach (var c in Hy2ServerCidrs) excludes.Add(c);
+                // Keep Discord Soft/probe off the TG TUN even if CF ranges overlap oddly
+                foreach (var c in SafeDiscordCidrs) excludes.Add(c);
+                excludes.Add("162.159.0.0/16");
+                foreach (var c in new[] { "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8" })
+                    excludes.Add(c);
+                tun["route_exclude_address"] = excludes;
+            }
+
+            // Route rules: drop IPv6 telegram CIDRs on Windows (no v6 TUN)
+            if (root["route"]?["rules"] is JsonArray rules)
+            {
+                foreach (var rule in rules)
+                {
+                    if (rule is not JsonObject o) continue;
+                    if (o["ip_cidr"] is not JsonArray cidrs) continue;
+                    var v4 = new JsonArray();
+                    foreach (var c in cidrs)
+                    {
+                        var s = c?.GetValue<string>() ?? "";
+                        if (s.Length == 0 || s.Contains(':')) continue;
+                        v4.Add(s);
+                    }
+                    o["ip_cidr"] = v4;
+                }
+            }
+
+            return root.ToJsonString(IndentedJson);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("HardenWindowsTelegramTun: " + ex.Message);
+            return json;
+        }
+    }
+
+    /// <summary>Discord TUN + HY2 (Linux Electron Soft miss / Windows Soft gateway miss).</summary>
+    public static string MaterializeDiscord(string runtimeLeaf)
+    {
+        var json = ReadEmbeddedOrDisk("client-discord.json");
+        json = InjectDiscordTunRouteAddresses(json);
+        json = PinTunHy2Outbound(json, Hy2PortDiscord);
+        json = HardenWindowsDiscordTun(json);
+        Logger.Info("discord TUN: client-discord.json (OnixBoostDC route_address)");
+        return WriteRuntime(json, runtimeLeaf);
+    }
+
+    /// <summary>Windows: keep IPv4 + system stack (same lessons as Telegram TUN).</summary>
+    private static string HardenWindowsDiscordTun(string json)
+    {
+        if (!PlatformOs.IsWindows) return json;
+        try
+        {
+            var root = JsonNode.Parse(json);
+            if (root is null) return json;
+            var inbounds = root["inbounds"]?.AsArray();
+            if (inbounds is null) return json;
+            foreach (var n in inbounds)
+            {
+                if (n is not JsonObject tun) continue;
+                if (!string.Equals(tun["type"]?.GetValue<string>(), "tun", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                tun["stack"] = "system";
+                tun["strict_route"] = false;
+                tun["interface_name"] = "OnixBoostDC";
+                tun["address"] = new JsonArray("172.19.0.9/30");
+            }
+            return root.ToJsonString(IndentedJson);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("HardenWindowsDiscordTun: " + ex.Message);
+            return json;
+        }
+    }
+
+    /// <summary>
+    /// Discord TUN catch = Cloudflare + curated voice /16s (GCP + 66.22).
+    /// Do NOT dump 600+ Amnezia rows into FIB — dual TUN with Telegram then flaps.
+    /// Skip fat GCP /12–/15 dumps that steal half of Google into OnixBoostDC.
+    /// </summary>
+    private static string InjectDiscordTunRouteAddresses(string json)
+    {
+        try
+        {
+            var root = JsonNode.Parse(json);
+            if (root is null) return json;
+            var inbounds = root["inbounds"]?.AsArray();
+            if (inbounds is null) return json;
+            JsonObject? tun = null;
+            foreach (var n in inbounds)
+            {
+                if (n is JsonObject o &&
+                    string.Equals(o["type"]?.GetValue<string>(), "tun", StringComparison.OrdinalIgnoreCase))
+                {
+                    tun = o;
+                    break;
+                }
+            }
+            if (tun is null) return json;
+
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var arr = new JsonArray();
+            void Add(string c)
+            {
+                c = (c ?? "").Trim();
+                if (c.Length == 0 || !seen.Add(c)) return;
+                arr.Add(c);
+            }
+
+            foreach (var c in SafeDiscordCidrs) Add(c);
+            Add("162.159.0.0/16");
+            Add("162.158.0.0/15");
+            Add("104.16.0.0/13");
+            Add("172.64.0.0/13");
+            Add("5.200.14.0/24");
+            Add("188.114.96.0/20");
+            foreach (var c in DiscordVoiceCidrs) Add(c);
+
+            tun["route_address"] = arr;
+
+            // Never tunnel the HY2 server or LAN into itself
+            var excludes = new JsonArray();
+            foreach (var c in Hy2ServerCidrs) excludes.Add(c);
+            foreach (var c in new[] { "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8" })
+                excludes.Add(c);
+            tun["route_exclude_address"] = excludes;
+
+            // WebRTC UDP has no SNI — sniff only burns 800ms and drops early voice packets
+            StripDiscordSniff(root);
+
+            // UDP voice must hit ip_cidr → hy2, not final=direct
+            PatchDiscordRouteIpCidrs(root, seen);
+
+            Logger.Info(
+                $"discord TUN route_address={seen.Count} excludes={excludes.Count} (CF+GCP /16s, no sniff)");
+            return root.ToJsonString(IndentedJson);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("InjectDiscordTunRouteAddresses: " + ex.Message);
+            return json;
+        }
+    }
+
+    /// <summary>
+    /// Pin HY2 to a physical NIC + dedicated port so a sibling TUN (TG/DC) cannot
+    /// steal the QUIC path via auto_detect_interface.
+    /// </summary>
+    private static string PinTunHy2Outbound(string json, int hy2Port)
+    {
+        try
+        {
+            var root = JsonNode.Parse(json);
+            if (root is null) return json;
+            var iface = DetectPhysicalInterface();
+
+            var outbounds = root["outbounds"]?.AsArray();
+            if (outbounds != null)
+            {
+                foreach (var n in outbounds)
+                {
+                    if (n is not JsonObject o) continue;
+                    if (!string.Equals(o["type"]?.GetValue<string>(), "hysteria2",
+                            StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    o["server"] = Hy2ServerHost;
+                    o["server_port"] = hy2Port;
+                    if (!string.IsNullOrEmpty(iface))
+                        o["bind_interface"] = iface;
+                }
+            }
+
+            var route = root["route"] as JsonObject ?? new JsonObject();
+            root["route"] = route;
+            if (!string.IsNullOrEmpty(iface))
+            {
+                route["auto_detect_interface"] = false;
+                route["default_interface"] = iface;
+            }
+            else
+            {
+                route["auto_detect_interface"] = true;
+                route.Remove("default_interface");
+            }
+
+            Logger.Info($"TUN HY2 pin: server={Hy2ServerHost} port={hy2Port} iface={iface ?? "(auto)"}");
+            return root.ToJsonString(IndentedJson);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("PinTunHy2Outbound: " + ex.Message);
+            return json;
+        }
+    }
+
+    /// <summary>Default route's physical device — skip OnixBoost*/tun/wg/lo.</summary>
+    private static string? DetectPhysicalInterface()
+    {
+        if (!PlatformOs.IsLinux) return null;
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "ip",
+                Arguments = "-4 route show default",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            using var p = Process.Start(psi);
+            if (p is null) return null;
+            var output = p.StandardOutput.ReadToEnd();
+            p.WaitForExit(2000);
+            foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                for (var i = 0; i + 1 < parts.Length; i++)
+                {
+                    if (!parts[i].Equals("dev", StringComparison.OrdinalIgnoreCase)) continue;
+                    var name = parts[i + 1];
+                    if (name.Equals("lo", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (name.StartsWith("OnixBoost", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (name.StartsWith("tun", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (name.StartsWith("wg", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (name.StartsWith("docker", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (name.StartsWith("br-", StringComparison.OrdinalIgnoreCase)) continue;
+                    return name;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("DetectPhysicalInterface: " + ex.Message);
+        }
+        return null;
+    }
+
+    private static void StripDiscordSniff(JsonNode root)
+    {
+        var rules = root["route"]?["rules"]?.AsArray();
+        if (rules is null) return;
+        for (var i = rules.Count - 1; i >= 0; i--)
+        {
+            if (rules[i] is JsonObject o &&
+                string.Equals(o["action"]?.GetValue<string>(), "sniff", StringComparison.OrdinalIgnoreCase))
+                rules.RemoveAt(i);
+        }
+    }
+
+    private static void PatchDiscordRouteIpCidrs(JsonNode root, HashSet<string> cidrs)
+    {
+        var rules = root["route"]?["rules"]?.AsArray();
+        if (rules is null) return;
+        foreach (var rule in rules)
+        {
+            if (rule is not JsonObject o) continue;
+            if (o["ip_cidr"] is null) continue;
+            var ipArr = new JsonArray();
+            var local = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var c in cidrs)
+            {
+                if (!local.Add(c)) continue;
+                ipArr.Add(c);
+            }
+            o["ip_cidr"] = ipArr;
+            return;
+        }
     }
 
     /// <summary>
@@ -78,30 +449,35 @@ public static class TunnelConfigStore
         bool youtube,
         bool twitch,
         bool telegram,
-        bool excludeDiscord)
+        bool excludeDiscord,
+        bool discord = false)
     {
         _ = excludeDiscord;
         // Legacy callers may pass telegram=true — ignore. TG is a separate HY2 process.
         _ = telegram;
-        if (!youtube && !twitch)
-            throw new InvalidOperationException("MaterializeService requires youtube and/or twitch");
+        if (!youtube && !twitch && !discord)
+            throw new InvalidOperationException("MaterializeService requires youtube, twitch, and/or discord");
 
         var json = ReadEmbeddedOrDisk("client-svc.json");
         // PAC already selects hosts; everything that hits mixed goes to HY2.
         json = AppendMixedInboundToHy2(json);
+        json = PinTunHy2Outbound(json, Hy2PortDiscord);
 
         if (youtube)
             json = AppendDomainHy2(json, YoutubeDomains);
         if (twitch)
             json = AppendDomainHy2(json, TwitchDomains);
+        if (discord)
+            json = AppendDomainHy2(json, DiscordDomains);
 
         json = ForceFinalDirect(json);
-        Logger.Info($"media PROXY+PAC: yt={youtube} tw={twitch} (tg=separate process)");
+        Logger.Info($"media PROXY+PAC: yt={youtube} tw={twitch} discord={discord} (tg=separate)");
         return WriteRuntime(json, runtimeLeaf);
     }
 
-    /// <summary>Wintun only when Telegram TUN is in the profile (YT/TW proxy needs no TUN).</summary>
-    public static bool NeedsWintun(bool telegram) => telegram;
+    /// <summary>Wintun only on Windows when Telegram TUN is in the profile (YT/TW proxy needs no TUN).</summary>
+    public static bool NeedsWintun(bool telegram) =>
+        telegram && PlatformOs.IsWindows;
 
     public static string Materialize(
         string logicalName,
@@ -166,7 +542,7 @@ public static class TunnelConfigStore
                 ["inbound"] = "mixed-media",
                 ["outbound"] = "nl-hy2"
             });
-            return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+            return root.ToJsonString(IndentedJson);
         }
         catch (Exception ex)
         {
@@ -209,7 +585,7 @@ public static class TunnelConfigStore
                 ["timeout"] = "800ms"
             });
 
-            return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+            return root.ToJsonString(IndentedJson);
         }
         catch (Exception ex)
         {
@@ -253,7 +629,7 @@ public static class TunnelConfigStore
             if (sniff != null) ordered.Add(sniff);
             foreach (var r in rest) ordered.Add(r);
             root["route"]!["rules"] = ordered;
-            return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+            return root.ToJsonString(IndentedJson);
         }
         catch (Exception ex)
         {
@@ -306,7 +682,7 @@ public static class TunnelConfigStore
                 ["server"] = "dns-hy2"
             });
             dns["rules"] = rules;
-            return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+            return root.ToJsonString(IndentedJson);
         }
         catch (Exception ex)
         {
@@ -333,7 +709,7 @@ public static class TunnelConfigStore
                 ["domain_suffix"] = arr,
                 ["outbound"] = "nl-hy2"
             });
-            return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+            return root.ToJsonString(IndentedJson);
         }
         catch (Exception ex)
         {
@@ -360,7 +736,7 @@ public static class TunnelConfigStore
                 ["ip_cidr"] = cidrs,
                 ["outbound"] = "nl-hy2"
             });
-            return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+            return root.ToJsonString(IndentedJson);
         }
         catch (Exception ex)
         {
@@ -401,7 +777,7 @@ public static class TunnelConfigStore
                 }
             }
 
-            return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+            return root.ToJsonString(IndentedJson);
         }
         catch { return json; }
     }
@@ -442,6 +818,8 @@ public static class TunnelConfigStore
             {
                 foreach (var c in SafeDiscordCidrs)
                     Add(c);
+                foreach (var c in DiscordVoiceCidrs)
+                    Add(c);
             }
 
             // When TG has its own card OFF, keep TG DC CIDRs off the media TUN
@@ -453,7 +831,7 @@ public static class TunnelConfigStore
             }
 
             tun["route_exclude_address"] = excludes;
-            return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+            return root.ToJsonString(IndentedJson);
         }
         catch (Exception ex)
         {
@@ -502,7 +880,7 @@ public static class TunnelConfigStore
             tun["route_address"] = arr;
             tun["mtu"] = 1400;
             Logger.Info($"media TUN route_address count={seen.Count} (selective, not 0.0.0.0/0)");
-            return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+            return root.ToJsonString(IndentedJson);
         }
         catch (Exception ex)
         {
@@ -534,7 +912,7 @@ public static class TunnelConfigStore
                 ["process_name"] = procs,
                 ["outbound"] = "direct"
             });
-            return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+            return root.ToJsonString(IndentedJson);
         }
         catch (Exception ex)
         {
@@ -633,6 +1011,11 @@ public static class TunnelConfigStore
 
     private static string ReadEmbeddedOrDisk(string logicalName)
     {
+        // Prefer on-disk dpi/core so Update.zip can hotfix routing without full reship.
+        var disk = Path.Combine(AppPaths.DpiRoot, "core", logicalName);
+        if (File.Exists(disk))
+            return File.ReadAllText(disk);
+
         var asm = Assembly.GetExecutingAssembly();
         var res = "OnixBoost.Tunnel." + logicalName;
         using (var s = asm.GetManifestResourceStream(res))
@@ -643,10 +1026,6 @@ public static class TunnelConfigStore
                 return r.ReadToEnd();
             }
         }
-
-        var disk = Path.Combine(AppPaths.DpiRoot, "core", logicalName);
-        if (File.Exists(disk))
-            return File.ReadAllText(disk);
 
         throw new FileNotFoundException("Tunnel config missing: " + logicalName);
     }

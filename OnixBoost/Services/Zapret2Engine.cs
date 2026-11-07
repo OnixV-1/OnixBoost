@@ -10,8 +10,8 @@ using System.Threading.Tasks;
 namespace OnixBoost.Services;
 
 /// <summary>
-/// Magila/zapret2 launcher: winws2.exe + Lua auto_strategy (strategy_super_c) + optional zapret_helper.
-/// Strategies from unblock-youtube-discord v1.7 / configs/strategy/1.6.2.
+/// Discord Soft = bol-van zapret2 (winws2) only.
+/// Magila strategy configs drive Lua auto_strategy; windivert Discord media filters from bol-van/zapret2.
 /// </summary>
 public sealed class Zapret2Engine
 {
@@ -50,21 +50,37 @@ public sealed class Zapret2Engine
             throw new FileNotFoundException("winws2.exe missing — unpack full zip (dpi/stack)", Winws2Exe);
 
         EnsureUserLists();
-        // Prefer synced Amnezia discord IP set if present
+        // EnsureUserLists copies Magila configs (tiny discord.list) — restore Amnezia CIDRs
         try
         {
-            var synced = DiscordIpSync.Zapret2DiscordIpSet;
-            if (File.Exists(synced) && new FileInfo(synced).Length > 32)
+            var dst = Path.Combine(UserDir, "ip-set", "discord.list");
+            var cached = DiscordIpSync.LoadCachedCidrs();
+            if (cached.Count >= 20)
             {
-                var dst = Path.Combine(UserDir, "ip-set", "discord.list");
-                File.Copy(synced, dst, true);
+                // Cap like Soft ipset — huge Amnezia dumps hurt winws2 user-mode
+                var capped = cached
+                    .Select(c => c.Contains('/') ? c : c + "/32")
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(x => x, StringComparer.Ordinal)
+                    .Take(2500)
+                    .ToList();
+                File.WriteAllLines(dst, capped);
+                Logger.Info($"zapret2 discord.list ← {capped.Count} Amnezia CIDR(s)");
+            }
+            else
+            {
+                var cfg = Path.Combine(Configs, "ip-set", "discord.list");
+                if (File.Exists(cfg) && new FileInfo(cfg).Length > 256)
+                    File.Copy(cfg, dst, true);
             }
         }
         catch { }
 
         var args = BuildArgs(strategyName);
+        // bol-van/zapret2: payload-aware windivert parts (Discord voice/media + STUN + QUIC)
+        InjectBolVanWindivertParts(args);
         File.WriteAllLines(Path.Combine(AppPaths.Root, "last-stack-args.txt"), args);
-        Logger.Info($"stack args count={args.Count}");
+        Logger.Info($"zapret2/winws2 args count={args.Count} strategy={Path.GetFileName(strategyName)}");
 
         // Helper first (auto_strategy helper_fails) — best-effort
         if (File.Exists(HelperExe))
@@ -78,12 +94,12 @@ public sealed class Zapret2Engine
                     UseShellExecute = false,
                     CreateNoWindow = true
                 });
-                Logger.Info("OnixBoost helper started");
+                Logger.Info("zapret2 helper started");
                 await Task.Delay(400);
             }
             catch (Exception ex)
             {
-                Logger.Error("OnixBoost helper: " + ex.Message);
+                Logger.Error("zapret2 helper: " + ex.Message);
             }
         }
 
@@ -110,30 +126,54 @@ public sealed class Zapret2Engine
 
         var log = Path.Combine(Binaries, "winws2.log");
         try { File.Delete(log); } catch { }
-        // also copy tip to app root for UI
         var logRoot = Path.Combine(AppPaths.Root, "winws2.log");
 
         _winws2 = Process.Start(new ProcessStartInfo
         {
             FileName = "cmd.exe",
-            // relative names only — absolute bat/log paths break under Cyrillic
             Arguments = "/c \"_onix_zapret2.cmd >winws2.log 2>&1\"",
             WorkingDirectory = Binaries,
             UseShellExecute = false,
             CreateNoWindow = true
         }) ?? throw new InvalidOperationException("Failed to start winws2");
 
-        await Task.Delay(1200);
+        // winws2 + Lua auto_strategy needs a bit longer to bind WinDivert
+        await Task.Delay(2200);
         if (Process.GetProcessesByName("winws2").Length == 0)
         {
             var tip = File.Exists(log) ? File.ReadAllText(log) : "(no winws2.log)";
             try { File.WriteAllText(logRoot, tip); } catch { }
             throw new InvalidOperationException(
-                "winws2 did not stay up.\n" + tip[..Math.Min(800, tip.Length)]);
+                "winws2 (zapret2) did not stay up.\n" + tip[..Math.Min(800, tip.Length)]);
         }
         try { if (File.Exists(log)) File.Copy(log, logRoot, true); } catch { }
 
-        Logger.Info("DPI stack RUNNING (strategy_super_c + auto_strategy)");
+        Logger.Info($"Discord Soft RUNNING zapret2/winws2 ({Path.GetFileName(strategyName)})");
+    }
+
+    /// <summary>
+    /// Official bol-van/zapret2 windivert payload filters — Discord media/voice without catching all UDP.
+    /// </summary>
+    private static void InjectBolVanWindivertParts(List<string> args)
+    {
+        var filterDir = Path.Combine(Binaries, "windivert.filter");
+        foreach (var name in new[]
+                 {
+                     "windivert_part.discord_media.txt",
+                     "windivert_part.stun.txt",
+                     "windivert_part.quic_initial_ietf.txt"
+                 })
+        {
+            var abs = Path.Combine(filterDir, name);
+            if (!File.Exists(abs)) continue;
+            var rel = "windivert.filter/" + name;
+            var arg = "--wf-raw-part=@" + rel.Replace('/', '\\');
+            if (args.Any(a => a.Contains(name, StringComparison.OrdinalIgnoreCase))) continue;
+            // After lua-init / early wf flags — insert near front (after first few globals)
+            var insertAt = Math.Min(8, args.Count);
+            args.Insert(insertAt, arg);
+            Logger.Info("zapret2 + bol-van filter " + name);
+        }
     }
 
     public async Task StopAsync()
@@ -260,19 +300,11 @@ public sealed class Zapret2Engine
         var ports = LoadPorts();
         var sections = ParseSections(File.ReadAllLines(strategyPath));
 
-        // Magila: START → services (use_in>>X pulls X) → END; emit by file order
+        // Discord Soft = START + discord + END only.
+        // Never pull cloudflare/youtube → use_in>>game_mod (~15k CIDRs) — that overload
+        // breaks winws2 user-mode and was the root of Soft timeouts on 2.9.18.
         var wanted = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            { "START", "discord", "cloudflare", "youtube", "END" };
-        // Resolve use_in>>target so e.g. cloudflare pulls game_mod filters
-        foreach (var sec in wanted.ToList())
-        {
-            if (!sections.TryGetValue(sec, out var body)) continue;
-            foreach (var line in body)
-            {
-                if (!line.StartsWith("use_in>>", StringComparison.Ordinal)) continue;
-                wanted.Add(line["use_in>>".Length..].Trim());
-            }
-        }
+            { "START", "discord", "END" };
 
         var fileLines = File.ReadAllLines(strategyPath);
         var ordered = sections.Keys
@@ -365,7 +397,11 @@ public sealed class Zapret2Engine
 
         if (line.Contains("%BLOCKLIST%", StringComparison.Ordinal))
         {
-            var name = section is "START" or "END" ? "all.list" : section + ".list";
+            // Soft Discord: always prefer discord hostlist (not Magila all.list megamerge)
+            var name = section.Equals("discord", StringComparison.OrdinalIgnoreCase) ||
+                       section is "START" or "END"
+                ? "discord.list"
+                : section + ".list";
             var rel = RelUser("blacklist", name);
             if (!File.Exists(Path.Combine(UserDir, "blacklist", name)))
                 rel = RelUser("blacklist", "all.list");
@@ -373,7 +409,11 @@ public sealed class Zapret2Engine
         }
         if (line.Contains("%IP-SETLIST%", StringComparison.Ordinal))
         {
-            var name = section is "START" or "END" ? "all.list" : section + ".list";
+            // Soft Discord: Amnezia Discord CIDRs (copied into user/ip-set/discord.list)
+            var name = section.Equals("discord", StringComparison.OrdinalIgnoreCase) ||
+                       section is "START" or "END"
+                ? "discord.list"
+                : section + ".list";
             return "--ipset=" + RelUser("ip-set", name);
         }
         if (line.Contains("%DOMAINS-EXCLUDE%", StringComparison.Ordinal))

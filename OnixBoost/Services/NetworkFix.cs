@@ -5,11 +5,14 @@ using System.Threading.Tasks;
 
 namespace OnixBoost.Services;
 
-/// <summary>Network tweaks that zapret/Flowseal users usually need (IPv6 off + flush DNS).</summary>
+/// <summary>Network tweaks that Soft users usually need (prefer IPv4 + flush DNS).</summary>
 public static class NetworkFix
 {
     public static async Task<string> PrepareForDpiAsync()
     {
+        if (PlatformOs.IsLinux)
+            return await PrepareLinuxAsync();
+
         var script = """
             $ErrorActionPreference = 'SilentlyContinue'
             # Prefer IPv4 — many DPI bypasses only handle IPv4; Discord often prefers AAAA
@@ -29,23 +32,42 @@ public static class NetworkFix
             : "NetworkFix ran (check Admin rights if IPv6 still on)";
     }
 
+    private static async Task<string> PrepareLinuxAsync()
+    {
+        // Never pkexec here — GUI password dialogs often fail; Soft does not need sysctl.
+        try
+        {
+            await RunAsync("resolvectl", "flush-caches");
+        }
+        catch { }
+        Logger.Info("NetworkFix: linux light (dns flush only, no pkexec)");
+        return "Linux: DNS cache flush (без pkexec). Soft: fix-caps.sh один раз";
+    }
+
     private static async Task<string> RunAsync(string file, string args)
     {
         return await Task.Run(() =>
         {
-            var psi = new ProcessStartInfo
+            try
             {
-                FileName = file,
-                Arguments = args,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            };
-            using var p = Process.Start(psi)!;
-            var o = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
-            p.WaitForExit(20000);
-            return o;
+                var psi = new ProcessStartInfo
+                {
+                    FileName = file,
+                    Arguments = args,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+                using var p = Process.Start(psi)!;
+                var o = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
+                p.WaitForExit(20000);
+                return o;
+            }
+            catch (Exception ex)
+            {
+                return ex.Message;
+            }
         });
     }
 }

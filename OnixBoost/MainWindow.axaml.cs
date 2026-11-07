@@ -22,6 +22,7 @@ public partial class MainWindow : Window
     private readonly Zapret2Engine _zapret2 = new();
     private readonly TunnelEngine _tunnelMedia = new(TunnelKind.Media);
     private readonly TunnelEngine _tunnelTg = new(TunnelKind.Telegram);
+    private readonly TunnelEngine _tunnelDiscord = new(TunnelKind.Discord);
     private readonly HealthChecker _health = new();
     private readonly StrategyAutoPicker _picker;
     private AppSettings _settings = SettingsStore.Load();
@@ -49,7 +50,10 @@ public partial class MainWindow : Window
     private bool _telegramTunnelOwned;
     private bool _twitchTunnelOwned;
     private bool _youtubeTunnelOwned;
+    /// <summary>Linux: Discord via HY2 TUN when Soft (nfqws) is unavailable.</summary>
+    private bool _discordViaTun;
     private BoostTarget? _busyTarget; // Discord connect spinner only
+    private DateTime _discordSoftStartedUtc = DateTime.MinValue;
     private bool _twitchConnecting;
     private bool _youtubeConnecting;
     private bool _telegramConnecting;
@@ -183,6 +187,16 @@ public partial class MainWindow : Window
         Log("OnixBoost " + AppUpdateChecker.CurrentVersion);
         if (PathAscii.RootHasNonAscii)
             Log("Лучше путь C:\\OnixBoost (без кириллицы).");
+        if (PlatformOs.IsLinux)
+        {
+            Log(LinuxElevate.SoftReady
+                ? "Linux Soft (zapret/nfqws): права OK — Discord как на Win 2.9.4"
+                : "Linux Soft: один раз в терминале: bash " + Path.Combine(AppPaths.Root, "fix-caps.sh"));
+            Log(LinuxElevate.TunnelCapsReady
+                ? "Linux TUN caps OK (Telegram)"
+                : "Telegram TUN тоже из fix-caps.sh");
+            Log("YouTube/Twitch на Linux не требуют sudo.");
+        }
         AppPaths.HideDpiFolder();
         AppUpdateChecker.CleanupAfterUpdate();
         try { BinaryUpdater.ApplyOnixListPatches(); } catch { }
@@ -454,13 +468,22 @@ public partial class MainWindow : Window
             return;
         }
 
-        // Discord
+        // Discord Soft connecting: ignore re-clicks for 60s (was cancelling Soft mid-probe)
         if (_busyTarget == BoostTarget.Discord && _intentDiscord)
         {
+            var connectingFor = DateTime.UtcNow - _discordSoftStartedUtc;
+            if (connectingFor < TimeSpan.FromSeconds(60))
+            {
+                Log($"Discord Soft: подожди подбор стратегии ({(int)connectingFor.TotalSeconds}s) — не жми повторно");
+                StatusText.Text = "Подбор стратегии…";
+                StatusText.Foreground = new SolidColorBrush(Color.Parse("#4DA3FF"));
+                return;
+            }
             SetDpiIntent(BoostTarget.Discord, false);
             CancelCurrentOp();
             SetBusy(null);
             RefreshCards();
+            Log("Discord Soft: отменено пользователем");
             return;
         }
         if (IsServiceOn(BoostTarget.Discord))
@@ -607,6 +630,7 @@ public partial class MainWindow : Window
         _telegramTunnelOwned = false;
         _twitchTunnelOwned = false;
         _youtubeTunnelOwned = false;
+        _discordViaTun = false;
         _youtubeConnecting = false;
         _telegramConnecting = false;
         _twitchConnecting = false;
@@ -673,7 +697,15 @@ public partial class MainWindow : Window
             _dpiStrategyFile = null;
             _dpiStrategyId = null;
             _dpiStrategyTitle = null;
-            try { await _picker.StopDiscordAsync(); } catch { }
+            if (_discordViaTun)
+            {
+                _discordViaTun = false;
+                try { await _tunnelDiscord.StopAsync(); } catch { }
+            }
+            else
+            {
+                try { await _picker.StopDiscordAsync(); } catch { }
+            }
         }
 
         // WinDivert cleanup only when Discord DPI is fully off (HY2 TUN is unrelated).
@@ -718,7 +750,7 @@ public partial class MainWindow : Window
     private bool EngineAlive =>
         _zapret2.IsRunning || _native.IsRunning || _picker.GamesDivertRunning ||
         _winwsDiscord.IsRunning || _winwsGames.IsRunning ||
-        _tunnelMedia.IsRunning || _tunnelTg.IsRunning;
+        _tunnelMedia.IsRunning || _tunnelTg.IsRunning || _tunnelDiscord.IsRunning;
 
     private void PersistUiSettings() => SettingsStore.Save(_settings);
 
@@ -743,6 +775,8 @@ public partial class MainWindow : Window
         CancelDiscordWatch();
         try { await _tunnelMedia.StopAsync(); } catch { }
         try { await _tunnelTg.StopAsync(); } catch { }
+        try { await _tunnelDiscord.StopAsync(); } catch { }
+        _discordViaTun = false;
         await _zapret2.StopAsync();
         await _native.StopAsync();
         await _picker.StopAllWinwsAsync();
@@ -852,6 +886,112 @@ public partial class MainWindow : Window
         catch (Exception ex) { Log("Discord IPs: " + ex.Message); }
     }
 
+    /// <summary>
+    /// Discord via FR HY2 TUN (OnixBoostDC). Linux only — Electron Soft/nfqws often fails.
+    /// Windows Discord card is Soft-only (Flowseal/winws + zapret2); no HY2 fallback.
+    /// </summary>
+    private async Task BoostDiscordTunAsync(CancellationToken ct, int gen)
+    {
+        try
+        {
+            SetBusy(BoostTarget.Discord);
+            RefreshCards();
+            SetStatusProgress("Подключение", "#4DA3FF");
+            try { await _picker.StopDiscordAsync(); } catch { }
+            await SyncDiscordIpsQuietAsync(ct);
+
+            if (PlatformOs.IsLinux)
+            {
+                LinuxElevate.InvalidatePrivilegeCache();
+                if (!LinuxElevate.IsRoot && !LinuxElevate.TunnelCapsReady)
+                {
+                    try { await LinuxElevate.EnsureSoftPrivilegesAsync(); } catch { }
+                    LinuxElevate.InvalidatePrivilegeCache();
+                    if (!LinuxElevate.TunnelCapsReady)
+                    {
+                        await LinuxDiagnose.LogAsync("Discord TUN: no CAP_NET_ADMIN on sing-box").ConfigureAwait(false);
+                        throw new InvalidOperationException(
+                            "Discord TUN: нет cap_net_admin на sing-box (после install caps сбрасываются).\n" +
+                            LinuxElevate.CapsHint);
+                    }
+                }
+            }
+
+            Exception? last = null;
+            for (var attempt = 1; attempt <= 3; attempt++)
+            {
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    await _tunnelDiscord.StartDiscordTunAsync();
+                    if (_tunnelDiscord.IsRunning) { last = null; break; }
+                    last = new InvalidOperationException("Discord TUN не стартовал");
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    last = ex;
+                    Log($"Discord TUN try {attempt}/3: {ex.Message}");
+                }
+                await Task.Delay(500 * attempt, ct);
+            }
+            if (last != null || !_tunnelDiscord.IsRunning)
+                throw last ?? new InvalidOperationException("Discord TUN не стартовал");
+
+            await Task.Delay(PlatformOs.IsWindows ? 1200 : 700, ct);
+            var probe = await _health.CheckTargetAsync(BoostTarget.Discord, ct, fastFail: false);
+            Log(probe.Ok
+                ? $"Discord TUN OK ({probe.Detail}, {probe.Ms} ms)"
+                : $"Discord TUN up · probe soft: {probe.Detail}");
+
+            _discordOn = true;
+            _intentDiscord = false;
+            _discordViaTun = true;
+            RememberDpiStrategy(
+                PlatformOs.IsWindows ? "tun-win" : "tun-linux",
+                PlatformOs.IsWindows ? "tun-win" : "tun-linux",
+                "HY2 TUN");
+            SetBusy(null);
+            UpdateStatusUi(true);
+            RefreshCards();
+            RefreshHealthSummary();
+            Log("Discord ONLINE (HY2 TUN OnixBoostDC → FR:443)");
+        }
+        catch (OperationCanceledException)
+        {
+            if (!IsCurrentOp(gen)) return;
+            _discordViaTun = false;
+            _intentDiscord = false;
+            SetBusy(null);
+            try { await _tunnelDiscord.StopAsync(); } catch { }
+            RefreshCards();
+            StatusText.Text = "Таймаут Discord";
+            StatusText.Foreground = new SolidColorBrush(Color.Parse("#F5A524"));
+        }
+        catch (Exception ex)
+        {
+            if (!IsCurrentOp(gen)) return;
+            _discordViaTun = false;
+            _intentDiscord = false;
+            _discordOn = false;
+            SetBusy(null);
+            try { await _tunnelDiscord.StopAsync(); } catch { }
+            RefreshCards();
+            Log("Discord TUN ERROR: " + ex.Message);
+            var needCaps = PlatformOs.IsLinux && (
+                !LinuxElevate.TunnelCapsReady ||
+                ex.Message.Contains("fix-caps", StringComparison.OrdinalIgnoreCase) ||
+                ex.Message.Contains("cap_net", StringComparison.OrdinalIgnoreCase) ||
+                ex.Message.Contains("права", StringComparison.OrdinalIgnoreCase));
+            if (needCaps)
+                Log(LinuxElevate.CapsHint);
+            var oneLine = ex.Message.Replace('\n', ' ').Trim();
+            if (oneLine.Length > 72) oneLine = oneLine[..69] + "…";
+            StatusText.Text = needCaps ? "Не удалось · fix-caps.sh" : ("TUN: " + oneLine);
+            StatusText.Foreground = new SolidColorBrush(Color.Parse("#F5A524"));
+        }
+    }
+
     private async Task BoostDiscordAsync()
     {
         var (ct, gen) = BeginOp();
@@ -862,105 +1002,89 @@ public partial class MainWindow : Window
         try
         {
             SetBusy(BoostTarget.Discord);
+            _discordSoftStartedUtc = DateTime.UtcNow;
             RefreshCards();
             SetStatusProgress("Подключение", "#4DA3FF");
             _ = Task.Run(PersistUiSettings);
             await Task.Yield();
 
+            // Linux Discord app (Electron): Soft/nfqws can pass our probes but client stays on
+            // "Starting" (Kyber TLS / different path). Same stack as Telegram — HY2 TUN.
+            if (PlatformOs.IsLinux)
+            {
+                Log("Discord Linux: HY2 TUN (Electron; Soft nfqws не поднимает клиент)");
+                await BoostDiscordTunAsync(ct, gen);
+                return;
+            }
+
+            // Clash/v2rayN :10809 kills Soft probes + Discord.exe — clear before anything else
+            try { SystemProxyHelper.ClearForeignProxyForSoft(); } catch { }
+
             await EnsureSessionPreparedAsync(ct, killOtherWorkers: !_twitchOn && !_youtubeOn && !_telegramOn);
             await SyncDiscordIpsQuietAsync(ct);
 
-            // Do NOT wipe Discord Cache here — forces "Checking for updates…" and races Soft.
-
-            // Games is HY2 — never merge games_main into Discord winws.
-            const bool withGames = false;
-
-            const int maxRounds = 2;
-            for (var round = 1; round <= maxRounds; round++)
+            // Windows Discord Soft = Flowseal/winws1 like 2.9.4; zapret2 only as fallback inside picker
+            var prefer = GetPrefer(BoostTarget.Discord);
+            var reuseFile = !string.IsNullOrEmpty(_dpiStrategyFile)
+                ? _dpiStrategyFile
+                : StrategyAutoPicker.ResolveArgsFile(prefer ?? "");
+            if (!string.IsNullOrEmpty(reuseFile))
             {
-                ct.ThrowIfCancellationRequested();
-                if (round > 1)
+                try
                 {
-                    Log($"Discord: повтор {round}/{maxRounds}…");
-                    SetStatusProgress($"Подключение · {round}", "#4DA3FF");
-                    await Task.Delay(800 * round, ct);
-                }
-
-                // 1) Reuse last known strategy
-                var reuseFile = !string.IsNullOrEmpty(_dpiStrategyFile)
-                    ? _dpiStrategyFile
-                    : StrategyAutoPicker.ResolveArgsFile(GetPrefer(BoostTarget.Discord) ?? "");
-                if (!string.IsNullOrEmpty(reuseFile))
-                {
-                    try
+                    Log("Discord Soft: reuse «" + Path.GetFileName(reuseFile) + "»…");
+                    await _picker.StartDiscordAsync(reuseFile, gamesAlsoOn: false);
+                    lastFile = reuseFile;
+                    lastSid = prefer ?? _dpiStrategyId ?? Path.GetFileNameWithoutExtension(reuseFile);
+                    lastTitle = _dpiStrategyTitle ?? lastSid;
+                    await Task.Delay(1800, ct);
+                    if (await AcceptComboAsync(true, false, false, ct, retries: 3))
                     {
-                        Log($"Discord reuse (r{round})…");
-                        await _picker.StartDiscordAsync(reuseFile, gamesAlsoOn: withGames);
-                        lastFile = reuseFile;
-                        lastSid = _dpiStrategyId ?? GetPrefer(BoostTarget.Discord) ?? "reuse";
-                        lastTitle = _dpiStrategyTitle ?? lastSid;
-                        await Task.Delay(900, ct);
-                        if (await AcceptComboAsync(true, false, false, ct, retries: 3))
-                        {
-                            await FinishDiscordOnlineAsync(ct, lastSid, reuseFile, lastTitle, probeOk: true);
-                            return;
-                        }
-                        Log("Discord reuse: probe fail — continue sweep");
-                    }
-                    catch (OperationCanceledException) { throw; }
-                    catch (Exception ex) { Log("Discord reuse: " + ex.Message); }
-                }
-
-                // 2) Flowseal sweep — ONLINE only after real gateway OK
-                Log($"Discord: стратегии (r{round})…");
-                var prefer = GetPrefer(BoostTarget.Discord);
-                var (sid, stitle, sfile) = await _picker.FindWorkingDiscordAsync(
-                    Log, ct, prefer, maxStrategies: 14,
-                    status: _ => SetStatusProgress("Подключение…", "#4DA3FF"),
-                    gamesAlsoOn: false);
-
-                if (sid != null && !string.IsNullOrEmpty(sfile))
-                {
-                    lastSid = sid;
-                    lastTitle = stitle ?? sid;
-                    lastFile = sfile;
-                    if (await AcceptComboAsync(true, false, false, ct, retries: 2))
-                    {
-                        SavePrefer(BoostTarget.Discord, sid);
-                        await FinishDiscordOnlineAsync(ct, sid, sfile, stitle ?? sid, probeOk: true);
+                        await FinishDiscordOnlineAsync(ct, lastSid, reuseFile, lastTitle, probeOk: true);
                         return;
                     }
-                    // FindWorking already confirmed gateway — accept soft confirm flake once
-                    Log("Discord: gateway was OK in sweep — ONLINE");
+                    Log("Discord Soft reuse: probe fail — sweep");
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch (OperationCanceledException) { Log("Discord Soft reuse: probe timeout"); }
+                catch (Exception ex) { Log("Discord Soft reuse: " + ex.Message); }
+            }
+
+            Log("Discord Soft: Flowseal/winws (2.9.4 path)…");
+            var (sid, stitle, sfile) = await _picker.FindWorkingDiscordAsync(
+                Log, ct, prefer,
+                maxStrategies: 14,
+                status: _ => SetStatusProgress("Подключение…", "#4DA3FF"));
+
+            if (sid != null && !string.IsNullOrEmpty(sfile))
+            {
+                lastSid = sid;
+                lastTitle = stitle ?? sid;
+                lastFile = sfile;
+                if (await AcceptComboAsync(true, false, false, ct, retries: 2))
+                {
                     SavePrefer(BoostTarget.Discord, sid);
                     await FinishDiscordOnlineAsync(ct, sid, sfile, stitle ?? sid, probeOk: true);
                     return;
                 }
-            }
-
-            // Last chance: restart last candidate and require real gateway (no fake ONLINE)
-            if (!string.IsNullOrEmpty(lastFile))
-            {
-                try
-                {
-                    await _picker.StartDiscordAsync(lastFile, gamesAlsoOn: false);
-                    await Task.Delay(1000, ct);
-                    var lastProbe = await _health.CheckTargetAsync(BoostTarget.Discord, ct, fastFail: false);
-                    if (lastProbe.Ok)
-                    {
-                        Log($"Discord last-chance OK ({lastProbe.Ms} ms)");
-                        await FinishDiscordOnlineAsync(ct, lastSid ?? "retry", lastFile, lastTitle ?? "retry",
-                            probeOk: true);
-                        return;
-                    }
-                    Log($"Discord last-chance fail: {lastProbe.Detail}");
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex) { Log("Discord last-chance: " + ex.Message); }
+                Log("Discord Soft: gateway was OK in sweep — ONLINE");
+                SavePrefer(BoostTarget.Discord, sid);
+                await FinishDiscordOnlineAsync(ct, sid, sfile, stitle ?? sid, probeOk: true);
+                return;
             }
 
             try { await _picker.StopDiscordAsync(); } catch { }
-            await FailDpiConnectAsync(false, "Discord");
+            await FailDpiConnectAsync(false, "Discord Soft (Flowseal/zapret2)");
+            return;
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // Stray probe timeout bubbled as OCE — treat as Soft fail, not user cancel
+            if (!IsCurrentOp(gen)) return;
+            Log("Discord Soft: probe OCE (не отмена) — продолжаем fail path");
+            try { await _picker.StopDiscordAsync(); } catch { }
+            await FailDpiConnectAsync(false, "Discord Soft (probe timeout)");
+            return;
         }
         catch (OperationCanceledException)
         {
@@ -998,6 +1122,23 @@ public partial class MainWindow : Window
         {
             if (!IsCurrentOp(gen)) return;
             try { await _picker.StopDiscordAsync(); } catch { }
+            var needsCaps = PlatformOs.IsLinux &&
+                            (ex.Message.Contains("fix-caps", StringComparison.OrdinalIgnoreCase) ||
+                             ex.Message.Contains("права", StringComparison.OrdinalIgnoreCase) ||
+                             ex.Message.Contains("NFQUEUE", StringComparison.OrdinalIgnoreCase) ||
+                             !LinuxElevate.SoftReady);
+            if (needsCaps)
+            {
+                Log("Soft fail (права): " + ex.Message);
+                Log(LinuxElevate.CapsHint);
+                if (!_discordOn) _intentDiscord = false;
+                SetBusy(null);
+                RefreshCards();
+                UpdateStatusUi(EngineAlive);
+                StatusText.Text = "Не удалось · fix-caps.sh";
+                StatusText.Foreground = new SolidColorBrush(Color.Parse("#F5A524"));
+                return;
+            }
             if (!_discordOn) _intentDiscord = false;
             SetBusy(null);
             RefreshCards();
@@ -1035,10 +1176,15 @@ public partial class MainWindow : Window
     private async Task DiscordWatchLoopAsync(CancellationToken ct, int gen)
     {
         var consecutiveFails = 0;
+        // Linux: Discord Electron "Starting" + Soft settle — don't thrash nfqws mid-handshake
+        var bootDelay = PlatformOs.IsLinux ? 70 : 40;
+        var failNeed = PlatformOs.IsLinux ? 3 : 2;
+        var failWait = PlatformOs.IsLinux ? 20 : 12;
+        var okInterval = PlatformOs.IsLinux ? 45 : 35;
         try
         {
-            // Let Discord finish "Checking for updates" before first probe
-            await Task.Delay(TimeSpan.FromSeconds(40), ct);
+            // Let Discord finish "Checking for updates" / Starting before first probe
+            await Task.Delay(TimeSpan.FromSeconds(bootDelay), ct);
             while (!ct.IsCancellationRequested && gen == Volatile.Read(ref _discordWatchGen))
             {
                 if (!_discordOn || gen != Volatile.Read(ref _discordWatchGen))
@@ -1048,15 +1194,15 @@ public partial class MainWindow : Window
                 if (d.Ok)
                 {
                     consecutiveFails = 0;
-                    await Task.Delay(TimeSpan.FromSeconds(35), ct);
+                    await Task.Delay(TimeSpan.FromSeconds(okInterval), ct);
                     continue;
                 }
 
                 consecutiveFails++;
-                if (consecutiveFails < 2)
+                if (consecutiveFails < failNeed)
                 {
                     Log($"Discord watchdog: soft fail ({d.Detail}) — wait");
-                    await Task.Delay(TimeSpan.FromSeconds(12), ct);
+                    await Task.Delay(TimeSpan.FromSeconds(failWait), ct);
                     continue;
                 }
 
@@ -1069,7 +1215,7 @@ public partial class MainWindow : Window
                     try
                     {
                         await _picker.StartDiscordAsync(_dpiStrategyFile, gamesAlsoOn: false);
-                        await Task.Delay(900, ct);
+                        await Task.Delay(PlatformOs.IsLinux ? 1800 : 900, ct);
                         var again = await _health.CheckTargetAsync(BoostTarget.Discord, ct, fastFail: false);
                         if (again.Ok)
                         {
@@ -1082,13 +1228,14 @@ public partial class MainWindow : Window
                     catch (Exception ex) { Log("Discord watchdog reuse: " + ex.Message); }
                 }
 
-                if (!repaired && !ct.IsCancellationRequested && _discordOn)
+                // Linux: prefer reuse only — full sweep mid-session kills Discord TLS more often than it helps
+                if (!repaired && !ct.IsCancellationRequested && _discordOn && !PlatformOs.IsLinux)
                 {
                     try
                     {
                         var prefer = GetPrefer(BoostTarget.Discord);
                         var (sid, stitle, sfile) = await _picker.FindWorkingDiscordAsync(
-                            Log, ct, prefer, maxStrategies: 10,
+                            Log, ct, prefer, maxStrategies: 0,
                             status: _ => SetStatusProgress("Подключение…", "#4DA3FF"),
                             gamesAlsoOn: false);
                         if (sid != null && !string.IsNullOrEmpty(sfile))
@@ -1113,7 +1260,7 @@ public partial class MainWindow : Window
                         Log("Discord watchdog: still down — will retry");
                 }
 
-                await Task.Delay(TimeSpan.FromSeconds(repaired ? 35 : 18), ct);
+                await Task.Delay(TimeSpan.FromSeconds(repaired ? okInterval : (PlatformOs.IsLinux ? 25 : 18)), ct);
             }
         }
         catch (OperationCanceledException) { }
@@ -1124,12 +1271,18 @@ public partial class MainWindow : Window
     private async Task FailDpiConnectAsync(bool extending, string label)
     {
         Log("Не удалось подключить: " + label);
+        if (PlatformOs.IsLinux)
+        {
+            try { await LinuxDiagnose.LogAsync("Fail " + label); } catch { }
+            Log(LinuxElevate.CapsHint);
+        }
         if (!_discordOn) _intentDiscord = false;
         SetBusy(null);
         RefreshCards();
         UpdateStatusUi(EngineAlive);
         RefreshHealthSummary();
-        StatusText.Text = "Не удалось";
+        // No modal dialog — ShowDialog blocked close when Soft elevate hung.
+        StatusText.Text = PlatformOs.IsLinux ? "Не удалось · fix-caps.sh" : "Не удалось";
         StatusText.Foreground = new SolidColorBrush(Color.Parse("#F5A524"));
         await Task.CompletedTask;
     }
@@ -1213,8 +1366,8 @@ public partial class MainWindow : Window
         }
 
         ct.ThrowIfCancellationRequested();
-        Log($"Media tunnel: YT={wantYt} Twitch={wantTwitch} (TG process untouched)");
-        await _tunnelMedia.StartMediaAsync(wantYt, wantTwitch);
+        Log($"Media tunnel: YT={wantYt} Twitch={wantTwitch} (TG/Discord TUN untouched)");
+        await _tunnelMedia.StartMediaAsync(wantYt, wantTwitch, discord: false);
         _youtubeTunnelOwned = wantYt;
         _twitchTunnelOwned = wantTwitch;
         await Task.Delay(500, ct);
@@ -1362,7 +1515,7 @@ public partial class MainWindow : Window
     /// <summary>After HY2 media TUN comes up, re-check Discord and restart Discord winws only.</summary>
     private async Task SoftRepairDiscordAfterTunnelAsync(CancellationToken ct)
     {
-        if (!_discordOn || string.IsNullOrEmpty(_dpiStrategyFile)) return;
+        if (!_discordOn || _discordViaTun || string.IsNullOrEmpty(_dpiStrategyFile)) return;
         try
         {
             await Task.Delay(400, ct);
@@ -1509,7 +1662,7 @@ public partial class MainWindow : Window
             _telegramConnecting = false;
             try { await RebuildTelegramTunnelAsync(CancellationToken.None); } catch { }
             RefreshCards();
-            StatusText.Text = "Telegram не удалось";
+            StatusText.Text = "Telegram не удалось (tunnel down)";
             StatusText.Foreground = new SolidColorBrush(Color.Parse("#FF5A64"));
         }
         catch (OperationCanceledException)
@@ -1530,8 +1683,22 @@ public partial class MainWindow : Window
             try { await RebuildTelegramTunnelAsync(CancellationToken.None); } catch { }
             RefreshCards();
             Log("ERROR: " + ex.Message);
-            StatusText.Text = "Telegram не удалось";
-            StatusText.Foreground = new SolidColorBrush(Color.Parse("#FF5A64"));
+            if (PlatformOs.IsLinux)
+            {
+                Log(LinuxElevate.CapsHint);
+                StatusText.Text = "Telegram · fix-caps.sh";
+                StatusText.Foreground = new SolidColorBrush(Color.Parse("#F5A524"));
+            }
+            else
+            {
+                // Surface real cause (wintun/admin/config) — "не удалось" alone hides the fix.
+                var tip = ex.Message.Replace('\r', ' ').Replace('\n', ' ').Trim();
+                if (tip.Length > 90) tip = tip[..90] + "…";
+                StatusText.Text = string.IsNullOrWhiteSpace(tip)
+                    ? "Telegram не удалось"
+                    : ("Telegram: " + tip);
+                StatusText.Foreground = new SolidColorBrush(Color.Parse("#FF5A64"));
+            }
         }
     }
 

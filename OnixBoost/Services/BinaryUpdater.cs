@@ -35,6 +35,8 @@ public sealed class BinaryUpdater
         }
 
         await CopyListsFromBinParentAsync(srcBin, progress);
+        // Flowseal may ship stub/megaset ipset-all — restore Amnezia Discord CIDRs for Soft
+        DiscordIpSync.RebuildSoftIpsetFromCache();
 
         try { File.Delete(tmpZip); } catch { }
         try { Directory.Delete(tmpDir, true); } catch { }
@@ -71,6 +73,8 @@ public sealed class BinaryUpdater
             var (tag, srcBin, tmpZip, tmpDir) = await DownloadExtractAsync(null, ct);
             await CopyListsFromBinParentAsync(srcBin, null);
             ApplyOnixListPatches();
+            // Flowseal ships ipset-all as stub/none — restore Amnezia Discord CIDRs for Soft voice/IP
+            DiscordIpSync.RebuildSoftIpsetFromCache();
             try { File.Delete(tmpZip); } catch { }
             try { Directory.Delete(tmpDir, true); } catch { }
             TouchListsStamp();

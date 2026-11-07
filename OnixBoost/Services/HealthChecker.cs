@@ -4,7 +4,9 @@ using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Authentication;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -37,17 +39,18 @@ public sealed class HealthChecker
         "162.159.128.233", "162.159.135.233"
     };
 
-    private static readonly TimeSpan HttpTimeout = TimeSpan.FromSeconds(2.5);
+    private static readonly TimeSpan HttpTimeout = TimeSpan.FromSeconds(3.5);
     /// <summary>Generic fast sweep (YT/Twitch). Too short for Discord gateway (DNS+TLS).</summary>
     private static readonly TimeSpan SweepFailTimeout = TimeSpan.FromMilliseconds(900);
-    /// <summary>Discord Soft sweep/watchdog — gateway needs DoH + TLS, 900ms always cancels.</summary>
-    private static readonly TimeSpan DiscordSweepFailTimeout = TimeSpan.FromMilliseconds(3200);
+    /// <summary>Discord Soft — API + WSS host (+ CDN on Linux). Needs room for DoH+TLS×2.</summary>
+    private static readonly TimeSpan DiscordSweepFailTimeout = TimeSpan.FromMilliseconds(10000);
     private static readonly TimeSpan DohTimeout = TimeSpan.FromSeconds(2);
 
     public async Task<HealthResult> CheckAsync(CancellationToken ct = default, bool? engineAlive = null)
     {
         var winws = Process.GetProcessesByName("winws").Length > 0
-                    || Process.GetProcessesByName("winws2").Length > 0;
+                    || Process.GetProcessesByName("winws2").Length > 0
+                    || Process.GetProcessesByName("nfqws").Length > 0;
         var alive = engineAlive ?? winws;
 
         // Discord + YouTube in parallel
@@ -77,11 +80,87 @@ public sealed class HealthChecker
         };
     }
 
-    /// <summary>UnblockPro-style: Discord API must return real gateway JSON with wss://</summary>
+    /// <summary>Soft strategy sweep — gateway JSON only (fast). Full strict used for confirm/watchdog.</summary>
+    public Task<(bool Ok, long Ms, string Detail)> CheckDiscordGatewayOnlyAsync(CancellationToken ct = default) =>
+        ProbeDiscordGatewayAsync(ct);
+
+    /// <summary>
+    /// Discord API gateway JSON + TLS to gateway.discord.gg (WSS host).
+    /// On Linux also cdn.discordapp.com — Electron "Starting" needs CDN, not only /api/gateway.
+    /// </summary>
     public async Task<(bool Ok, long Ms, string Detail)> CheckDiscordStrictAsync(CancellationToken ct = default)
     {
         var (ok, ms, detail) = await ProbeDiscordGatewayAsync(ct);
-        return (ok, ms, detail);
+        if (!ok) return (ok, ms, detail);
+
+        var (wssOk, wssMs, wssDetail) = await ProbeTlsSniAsync("gateway.discord.gg", ct);
+        if (!wssOk)
+            return (false, ms + wssMs, "api OK, wss-host fail: " + wssDetail);
+
+        if (PlatformOs.IsLinux)
+        {
+            var (cdnOk, cdnMs, cdnDetail) = await ProbeTlsSniAsync("cdn.discordapp.com", ct);
+            if (!cdnOk)
+                return (false, ms + wssMs + cdnMs, "api+wss OK, cdn fail: " + cdnDetail);
+            return (true, ms + wssMs + cdnMs, "gateway+wss+cdn OK");
+        }
+
+        return (true, ms + wssMs, "gateway+wss OK");
+    }
+
+    /// <summary>TCP+TLS ClientHello with SNI — proves DPI path for Discord app hosts.</summary>
+    private static async Task<(bool ok, long ms, string detail)> ProbeTlsSniAsync(
+        string host, CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        List<IPAddress> ips;
+        try { ips = await ResolveAsync(host, ct); }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            return (false, sw.ElapsedMilliseconds, "DNS: " + ex.Message);
+        }
+        if (ips.Count == 0)
+        {
+            sw.Stop();
+            return (false, sw.ElapsedMilliseconds, "DNS empty");
+        }
+
+        Exception? last = null;
+        foreach (var ip in ips.Take(2))
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(HttpTimeout);
+                using var socket = new Socket(ip.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
+                {
+                    NoDelay = true
+                };
+                await socket.ConnectAsync(ip, 443, cts.Token).ConfigureAwait(false);
+                await using var net = new NetworkStream(socket, ownsSocket: true);
+                using var ssl = new SslStream(net, leaveInnerStreamOpen: false);
+                await ssl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
+                {
+                    TargetHost = host,
+                    EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13
+                }, cts.Token).ConfigureAwait(false);
+                sw.Stop();
+                return (true, sw.ElapsedMilliseconds, host + " TLS OK");
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                last = new TimeoutException("TLS probe timeout");
+            }
+            catch (Exception ex)
+            {
+                last = ex;
+            }
+        }
+
+        sw.Stop();
+        return (false, sw.ElapsedMilliseconds, last?.GetType().Name ?? "TLS fail");
     }
 
     /// <summary>
@@ -315,56 +394,90 @@ public sealed class HealthChecker
     private static async Task<(bool ok, long ms, string detail)> ProbeDiscordGatewayAsync(CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
-        List<IPAddress> ips;
-        try { ips = await ResolveAsync("discord.com", ct); }
+        var candidates = new List<IPAddress>();
+        try
+        {
+            foreach (var ip in await ResolveAsync("discord.com", ct))
+                candidates.Add(ip);
+        }
         catch (Exception ex)
         {
-            sw.Stop();
-            return (false, sw.ElapsedMilliseconds, "DNS: " + ex.Message);
+            // Soft can still open known Discord CF edges when DoH is flaky
+            Logger.Info("Discord gateway DNS: " + ex.Message);
         }
-        if (ips.Count == 0)
+
+        foreach (var bootstrap in DiscordBootstrapIps)
+        {
+            if (IPAddress.TryParse(bootstrap, out var bip) &&
+                candidates.All(c => !c.Equals(bip)))
+                candidates.Add(bip);
+        }
+
+        if (candidates.Count == 0)
         {
             sw.Stop();
             return (false, sw.ElapsedMilliseconds, "DNS empty");
         }
 
-        try
+        Exception? last = null;
+        foreach (var ip in candidates.Take(4))
         {
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(HttpTimeout);
-            var ip = ips[0];
-            using var handler = new SocketsHttpHandler
+            ct.ThrowIfCancellationRequested();
+            try
             {
-                ConnectCallback = async (ctx, token) =>
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(HttpTimeout);
+                var connectIp = ip;
+                using var handler = new SocketsHttpHandler
                 {
-                    var socket = new Socket(ip.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
-                    try
+                    UseProxy = false,
+                    AllowAutoRedirect = false,
+                    ConnectCallback = async (ctx, token) =>
                     {
-                        await socket.ConnectAsync(ip, 443, token);
-                        return new NetworkStream(socket, ownsSocket: true);
+                        var socket = new Socket(connectIp.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
+                        {
+                            NoDelay = true
+                        };
+                        try
+                        {
+                            await socket.ConnectAsync(connectIp, 443, token);
+                            return new NetworkStream(socket, ownsSocket: true);
+                        }
+                        catch { socket.Dispose(); throw; }
                     }
-                    catch { socket.Dispose(); throw; }
+                };
+                using var http = new HttpClient(handler) { Timeout = HttpTimeout };
+                using var req = new HttpRequestMessage(HttpMethod.Get, "https://discord.com/api/v10/gateway");
+                req.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 OnixBoost/2.9");
+                using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseContentRead, cts.Token);
+                var body = await resp.Content.ReadAsStringAsync(cts.Token);
+                if ((int)resp.StatusCode != 200)
+                {
+                    last = new HttpRequestException("HTTP " + (int)resp.StatusCode);
+                    continue;
                 }
-            };
-            using var http = new HttpClient(handler) { Timeout = HttpTimeout };
-            using var req = new HttpRequestMessage(HttpMethod.Get, "https://discord.com/api/v10/gateway");
-            req.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 OnixBoost/2.6");
-            using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseContentRead, cts.Token);
-            var body = await resp.Content.ReadAsStringAsync(cts.Token);
-            sw.Stop();
-            if ((int)resp.StatusCode != 200)
-                return (false, sw.ElapsedMilliseconds, "HTTP " + (int)resp.StatusCode);
-            // UnblockPro: real gateway returns {"url":"wss://gateway.discord.gg..."}
-            if (body.Contains("\"url\"", StringComparison.Ordinal) &&
-                body.Contains("wss://", StringComparison.OrdinalIgnoreCase))
-                return (true, sw.ElapsedMilliseconds, "gateway OK");
-            return (false, sw.ElapsedMilliseconds, "stub/blocked body");
+                // Real gateway returns {"url":"wss://gateway.discord.gg..."}
+                if (body.Contains("\"url\"", StringComparison.Ordinal) &&
+                    body.Contains("wss://", StringComparison.OrdinalIgnoreCase))
+                {
+                    sw.Stop();
+                    return (true, sw.ElapsedMilliseconds, "gateway OK via " + ip);
+                }
+                last = new HttpRequestException("stub/blocked body");
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // Per-request HttpTimeout — NOT user/op cancel. Treat as probe fail.
+                last = new TimeoutException("gateway probe timeout");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                last = ex;
+            }
         }
-        catch (Exception ex)
-        {
-            sw.Stop();
-            return (false, sw.ElapsedMilliseconds, ex.GetType().Name);
-        }
+
+        sw.Stop();
+        return (false, sw.ElapsedMilliseconds, FormatProbeError(last, "gateway fail"));
     }
 
     private static async Task<(bool ok, long ms, string detail)> ProbeHostAsync(
@@ -426,6 +539,8 @@ public sealed class HealthChecker
         cts.CancelAfter(HttpTimeout);
         using var handler = new SocketsHttpHandler
         {
+            UseProxy = false,
+            AllowAutoRedirect = false,
             ConnectCallback = async (ctx, token) =>
             {
                 var socket = new Socket(ip.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
@@ -447,6 +562,21 @@ public sealed class HealthChecker
         using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cts.Token);
         sw.Stop();
         return ((int)resp.StatusCode < 500, sw.ElapsedMilliseconds);
+    }
+
+    private static string FormatProbeError(Exception? ex, string fallback)
+    {
+        if (ex == null) return fallback;
+        var cur = ex;
+        while (cur.InnerException != null) cur = cur.InnerException;
+        var msg = cur.Message;
+        if (string.IsNullOrWhiteSpace(msg) ||
+            msg.Equals(nameof(HttpRequestException), StringComparison.Ordinal) ||
+            msg.StartsWith("An error occurred while sending", StringComparison.OrdinalIgnoreCase))
+            return cur.GetType().Name;
+        // Keep short — UI/log friendly
+        if (msg.Length > 120) msg = msg[..117] + "…";
+        return cur.GetType().Name + ": " + msg;
     }
 
     private static async Task<List<IPAddress>> ResolveAsync(string host, CancellationToken ct)

@@ -8,8 +8,8 @@ namespace OnixBoost;
 
 internal sealed class Program
 {
-    private const string MutexName = @"Local\OnixBoost.SingleInstance.v1";
-    private const string ShowEventName = @"Local\OnixBoost.ShowMain.v1";
+    private const string MutexName = "OnixBoost.SingleInstance.v1";
+    private const string ShowEventName = "OnixBoost.ShowMain.v1";
 
     private static Mutex? _mutex;
     private static EventWaitHandle? _showEvent;
@@ -18,22 +18,36 @@ internal sealed class Program
     [STAThread]
     public static void Main(string[] args)
     {
+#if !WINDOWS
+        // Desktop launchers often omit /usr/sbin — getcap/setcap must still be findable.
+        try
+        {
+            var path = Environment.GetEnvironmentVariable("PATH") ?? "";
+            if (!path.Contains("/usr/sbin", StringComparison.Ordinal))
+                Environment.SetEnvironmentVariable("PATH",
+                    "/usr/sbin:/sbin:/usr/local/sbin:" + path);
+        }
+        catch { }
+#endif
         _mutex = new Mutex(initiallyOwned: true, MutexName, out var createdNew);
         if (!createdNew)
         {
-            // Already running — ask the first instance to show the window
+#if WINDOWS
             try
             {
                 using var ev = EventWaitHandle.OpenExisting(ShowEventName);
                 ev.Set();
             }
             catch { /* first instance may be exiting */ }
+#endif
             return;
         }
 
         try
         {
+#if WINDOWS
             _showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName);
+#endif
             BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
         }
         finally

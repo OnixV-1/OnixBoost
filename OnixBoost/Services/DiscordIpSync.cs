@@ -122,10 +122,20 @@ public static class DiscordIpSync
             }
             catch { }
 
+            // Soft winws --ipset=ipset-all.txt:
+            // Flowseal default is "none" (stub 203.0.113.113). Full ipset-service (~33k CF CIDRs)
+            // breaks Windows winws user-mode ipset (bol-van: large ipsets are not viable).
+            // Soft Discord = Amnezia Discord CIDRs only (voice/media IP blocks) — not the CF megaset.
+            try
+            {
+                RebuildSoftIpset(lines);
+            }
+            catch { }
+
             try { await File.WriteAllTextAsync(StampPath, DateTime.UtcNow.ToString("o"), ct); } catch { }
             _lastOkUtc = DateTime.UtcNow;
 
-            var msg = $"Discord IPs: {lines.Length} CIDR";
+            var msg = $"Discord IPs: {lines.Length} CIDR → Soft ipset";
             Logger.Info(msg);
             return (true, msg);
         }
@@ -133,6 +143,63 @@ public static class DiscordIpSync
         {
             Gate.Release();
         }
+    }
+
+    /// <summary>
+    /// Flowseal stub marker — same as service.bat "IPSet Filter = none".
+    /// </summary>
+    public const string FlowsealIpsetNoneStub = "203.0.113.113/32";
+
+    /// <summary>
+    /// Rebuild dpi/lists/ipset-all.txt for Soft Discord: Discord CIDRs only (no CF megaset).
+    /// Call after Amnezia sync or when Flowseal lists overwrite the file with a stub/megaset.
+    /// </summary>
+    public static void RebuildSoftIpset(IEnumerable<string>? discordCidrs = null)
+    {
+        Directory.CreateDirectory(AppPaths.ListsDir);
+        var softIpset = Path.Combine(AppPaths.ListsDir, "ipset-all.txt");
+
+        var cidrs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (discordCidrs != null)
+        {
+            foreach (var c in discordCidrs)
+            {
+                var line = (c ?? "").Trim();
+                if (line.Length == 0 || line.StartsWith('#') || line.StartsWith("//")) continue;
+                cidrs.Add(line.Contains('/') ? line : line + "/32");
+            }
+        }
+
+        if (cidrs.Count < 20)
+        {
+            foreach (var c in LoadCachedCidrs())
+                cidrs.Add(c.Contains('/') ? c : c + "/32");
+        }
+
+        // Cap: Amnezia Discord is ~800; anything near Flowseal ipset-service size is wrong.
+        const int softIpsetCap = 2500;
+        var ordered = cidrs.Count > 0
+            ? cidrs.OrderBy(x => x, StringComparer.Ordinal).Take(softIpsetCap).ToList()
+            : new List<string> { FlowsealIpsetNoneStub };
+
+        var outLines = new List<string>
+        {
+            "# OnixBoost Soft Discord ipset — Amnezia Discord CIDRs (not Flowseal ipset-service megaset)",
+            "# winws user-mode cannot handle ~33k CF ranges; hostlists cover SNI, this covers IP-only voice/media"
+        };
+        outLines.AddRange(ordered);
+
+        var tmpAll = softIpset + ".tmp";
+        File.WriteAllLines(tmpAll, outLines);
+        File.Move(tmpAll, softIpset, overwrite: true);
+        Logger.Info($"Soft ipset-all.txt ← {ordered.Count} Discord CIDR(s)");
+    }
+
+    /// <summary>After Flowseal list sync (often resets stub) — re-apply cached Amnezia Discord CIDRs.</summary>
+    public static void RebuildSoftIpsetFromCache()
+    {
+        try { RebuildSoftIpset(LoadCachedCidrs()); }
+        catch (Exception ex) { Logger.Error("Soft ipset rebuild: " + ex.Message); }
     }
 
     private static string StripHostBit(string cidr)

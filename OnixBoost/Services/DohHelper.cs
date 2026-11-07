@@ -60,9 +60,16 @@ public static class DohHelper
             var primary = chosen.Primary;
             var secondary = chosen.Secondary;
             var doh = chosen.DohTemplate;
-            // Only allow known DoH templates (no user/file injection)
             if (doh != null && !doh.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
                 doh = null;
+
+            if (PlatformOs.IsLinux)
+            {
+                // Do not touch system DNS via pkexec — Soft works without it.
+                var linuxMsg = $"DNS left unchanged (Linux). Soft uses resolver probe only · prefer {chosen.Name} {primary}";
+                Logger.Info(linuxMsg);
+                return (true, linuxMsg);
+            }
 
             if (!string.IsNullOrEmpty(doh))
             {
@@ -113,10 +120,49 @@ public static class DohHelper
         }
     }
 
+    private static async Task<(bool ok, string message)> ApplyLinuxAsync(
+        DnsCandidate chosen, string primary, string secondary)
+    {
+        // Prefer NetworkManager if present; else resolvectl per-link.
+        var script =
+            "set +e\n" +
+            "if command -v nmcli >/dev/null 2>&1; then\n" +
+            "  CON=$(nmcli -t -f NAME,DEVICE connection show --active | head -1 | cut -d: -f1)\n" +
+            "  if [ -n \"$CON\" ]; then\n" +
+            $"    nmcli connection modify \"$CON\" ipv4.dns \"{primary} {secondary}\"\n" +
+            "    nmcli connection modify \"$CON\" ipv4.ignore-auto-dns yes\n" +
+            "    nmcli connection up \"$CON\" >/dev/null 2>&1 || true\n" +
+            "  fi\n" +
+            "elif command -v resolvectl >/dev/null 2>&1; then\n" +
+            "  IF=$(ip -o route get 1.1.1.1 2>/dev/null | sed -n 's/.*dev \\([^ ]*\\).*/\\1/p')\n" +
+            "  if [ -n \"$IF\" ]; then\n" +
+            $"    resolvectl dns \"$IF\" {primary} {secondary} || true\n" +
+            "  fi\n" +
+            "fi\n" +
+            "resolvectl flush-caches >/dev/null 2>&1 || true\n" +
+            "echo ok\n";
+        var tmp = Path.Combine(Path.GetTempPath(), $"onixboost-doh-{Environment.ProcessId}.sh");
+        await File.WriteAllTextAsync(tmp, "#!/bin/bash\n" + script);
+        try { Process.Start("chmod", "+x " + tmp)?.WaitForExit(2000); } catch { }
+        var o = await RunAsync("pkexec", "/bin/bash " + tmp);
+        if (!o.Contains("ok", StringComparison.OrdinalIgnoreCase))
+            o = await RunAsync("/bin/bash", tmp);
+        try { File.Delete(tmp); } catch { }
+        var msg = $"DNS → {chosen.Name} {primary}";
+        Logger.Info(msg + " linux=" + o[..Math.Min(120, o.Length)]);
+        return (true, msg);
+    }
+
     public static async Task<(bool ok, string message)> RestoreAsync()
     {
         try
         {
+            if (PlatformOs.IsLinux)
+            {
+                try { File.Delete(BackupPath); } catch { }
+                return (true, "DNS unchanged (Linux)");
+            }
+
             if (!File.Exists(BackupPath))
             {
                 var dhcp = """
@@ -187,9 +233,45 @@ public static class DohHelper
         }
     }
 
+    private static async Task<(bool ok, string message)> RestoreLinuxAsync()
+    {
+        var script =
+            "set +e\n" +
+            "if command -v nmcli >/dev/null 2>&1; then\n" +
+            "  CON=$(nmcli -t -f NAME,DEVICE connection show --active | head -1 | cut -d: -f1)\n" +
+            "  if [ -n \"$CON\" ]; then\n" +
+            "    nmcli connection modify \"$CON\" ipv4.dns \"\"\n" +
+            "    nmcli connection modify \"$CON\" ipv4.ignore-auto-dns no\n" +
+            "    nmcli connection up \"$CON\" >/dev/null 2>&1 || true\n" +
+            "  fi\n" +
+            "fi\n" +
+            "IF=$(ip -o route get 1.1.1.1 2>/dev/null | sed -n 's/.*dev \\([^ ]*\\).*/\\1/p')\n" +
+            "resolvectl revert \"$IF\" 2>/dev/null || true\n" +
+            "resolvectl flush-caches >/dev/null 2>&1 || true\n" +
+            "echo ok\n";
+        var tmp = Path.Combine(Path.GetTempPath(), $"onixboost-dns-restore-{Environment.ProcessId}.sh");
+        await File.WriteAllTextAsync(tmp, "#!/bin/bash\n" + script);
+        try { Process.Start("chmod", "+x " + tmp)?.WaitForExit(2000); } catch { }
+        await RunAsync("pkexec", "/bin/bash " + tmp);
+        try { File.Delete(tmp); } catch { }
+        try { File.Delete(BackupPath); } catch { }
+        Logger.Info("DNS restore → DHCP (linux)");
+        return (true, "DNS → DHCP");
+    }
+
     private static async Task BackupCurrentAsync()
     {
         if (File.Exists(BackupPath)) return;
+
+        if (PlatformOs.IsLinux)
+        {
+            var wrapped = "{\"adapters\":[],\"os\":\"linux\"}";
+            var tmpBak = BackupPath + ".tmp";
+            await File.WriteAllTextAsync(tmpBak, wrapped);
+            File.Move(tmpBak, BackupPath, overwrite: true);
+            Logger.Info("DNS backup saved (linux stub)");
+            return;
+        }
 
         var script = """
             $ErrorActionPreference = 'SilentlyContinue'
@@ -205,12 +287,11 @@ public static class DohHelper
 
         if (json.StartsWith('{'))
             json = "[" + json + "]";
-        var wrapped = "{\"adapters\":" + json + "}";
+        var wrappedWin = "{\"adapters\":" + json + "}";
 
-        // Atomic write
-        var tmpBak = BackupPath + ".tmp";
-        await File.WriteAllTextAsync(tmpBak, wrapped);
-        File.Move(tmpBak, BackupPath, overwrite: true);
+        var tmpBakWin = BackupPath + ".tmp";
+        await File.WriteAllTextAsync(tmpBakWin, wrappedWin);
+        File.Move(tmpBakWin, BackupPath, overwrite: true);
         Logger.Info("DNS backup saved");
     }
 
@@ -247,6 +328,16 @@ public static class DohHelper
 
     private static async Task<List<string>> ReadCurrentDnsAsync()
     {
+        if (PlatformOs.IsLinux)
+        {
+            var o = await RunAsync("/bin/bash",
+                "-c \"resolvectl status 2>/dev/null | awk '/DNS Servers:/{for(i=3;i<=NF;i++) print $i}'\"");
+            return o.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(IsSafeIpv4)
+                .Cast<string>()
+                .ToList();
+        }
+
         var script = """
             $ErrorActionPreference = 'SilentlyContinue'
             (Get-DnsClientServerAddress -AddressFamily IPv4 |
@@ -255,8 +346,8 @@ public static class DohHelper
             """;
         var tmp = Path.Combine(Path.GetTempPath(), "onixboost-dns-cur.ps1");
         await File.WriteAllTextAsync(tmp, script);
-        var o = await RunAsync("powershell", $"-NoProfile -ExecutionPolicy Bypass -File \"{tmp}\"");
-        return o.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        var oWin = await RunAsync("powershell", $"-NoProfile -ExecutionPolicy Bypass -File \"{tmp}\"");
+        return oWin.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(IsSafeIpv4)
             .Cast<string>()
             .ToList();
@@ -271,28 +362,46 @@ public static class DohHelper
         Process? p = null;
         try
         {
-            var names = string.Join("','", ProbeHosts);
-            var script = $$"""
-                $ErrorActionPreference = 'SilentlyContinue'
-                $n = 0
-                foreach ($h in @('{{names}}')) {
-                  $r = Resolve-DnsName -Name $h -Server '{{dnsIp}}' -Type A -DnsOnly -ErrorAction SilentlyContinue |
-                       Select-Object -First 1
-                  if ($r) { $n++ }
-                }
-                Write-Output $n
-                """;
-            var tmp = Path.Combine(Path.GetTempPath(), $"onixboost-dns-probe-{dnsIp.Replace('.', '-')}.ps1");
-            await File.WriteAllTextAsync(tmp, script);
-            p = Process.Start(new ProcessStartInfo
+            if (PlatformOs.IsLinux)
             {
-                FileName = "powershell",
-                Arguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{tmp}\"",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            });
+                var names = string.Join(" ", ProbeHosts);
+                p = Process.Start(new ProcessStartInfo
+                {
+                    FileName = "/bin/bash",
+                    Arguments =
+                        $"-c \"n=0; for h in {names}; do dig @{dnsIp} +time=1 +tries=1 +short \"$h\" A >/dev/null 2>&1 && n=$((n+1)); done; echo $n\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                });
+            }
+            else
+            {
+                var names = string.Join("','", ProbeHosts);
+                var script = $$"""
+                    $ErrorActionPreference = 'SilentlyContinue'
+                    $n = 0
+                    foreach ($h in @('{{names}}')) {
+                      $r = Resolve-DnsName -Name $h -Server '{{dnsIp}}' -Type A -DnsOnly -ErrorAction SilentlyContinue |
+                           Select-Object -First 1
+                      if ($r) { $n++ }
+                    }
+                    Write-Output $n
+                    """;
+                var tmp = Path.Combine(Path.GetTempPath(), $"onixboost-dns-probe-{dnsIp.Replace('.', '-')}.ps1");
+                await File.WriteAllTextAsync(tmp, script);
+                p = Process.Start(new ProcessStartInfo
+                {
+                    FileName = "powershell",
+                    Arguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{tmp}\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                });
+            }
+
             if (p == null) return (0, sw.ElapsedMilliseconds);
 
             var finished = await Task.Run(() => p.WaitForExit(3500));

@@ -22,12 +22,13 @@ public static class ProcessNames
         KillByName("zapret_helper"); // legacy
     }
 
-    /// <summary>winws / zapret2 only — never HY2 core (YouTube/Telegram tunnel).</summary>
+    /// <summary>winws / nfqws / zapret2 only — never HY2 core (YouTube/Telegram tunnel).</summary>
     public static void KillDpiWorkers()
     {
         KillStackWorkers();
         KillByName("winws");
         KillByName("winws2");
+        KillByName("nfqws");
     }
 
     public static void KillAllWorkers()

@@ -1,0 +1,118 @@
+{
+  "log": {
+    "level": "warn",
+    "timestamp": true,
+    "output": "core-discord.log"
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "udp",
+        "tag": "ydns",
+        "server": "8.8.8.8"
+      }
+    ],
+    "strategy": "ipv4_only"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-discord",
+      "interface_name": "OnixBoostDC",
+      "address": ["172.19.0.9/30"],
+      "mtu": 1200,
+      "auto_route": true,
+      "strict_route": false,
+      "stack": "system",
+      "route_address": [
+        "162.159.128.0/17",
+        "104.16.0.0/13",
+        "172.64.0.0/13",
+        "5.200.14.0/24",
+        "66.22.0.0/16",
+        "34.0.0.0/16",
+        "34.1.0.0/16",
+        "34.2.0.0/16",
+        "35.207.0.0/16",
+        "35.212.0.0/16",
+        "35.213.0.0/16",
+        "35.214.0.0/16",
+        "35.215.0.0/16",
+        "35.217.0.0/16",
+        "35.219.0.0/16"
+      ]
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "hysteria2",
+      "tag": "nl-hy2",
+      "server": "194.76.154.176",
+      "server_port": 443,
+      "password": "L7bnAtINJsjoxOLIcljIgoORjBbfOX2sLr4XmUco",
+      "tls": {
+        "enabled": true,
+        "server_name": "onixboost.local",
+        "insecure": true
+      }
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "default_domain_resolver": "ydns",
+    "auto_detect_interface": true,
+    "rules": [
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      {
+        "domain_suffix": [
+          "discord.com",
+          "discord.gg",
+          "discordapp.com",
+          "discordapp.net",
+          "discord.media",
+          "discordcdn.com",
+          "discord.gift",
+          "discord.gifts",
+          "discordactivities.com",
+          "discordsays.com",
+          "discordstatus.com",
+          "discord.co",
+          "discord.app",
+          "dis.gd",
+          "gateway.discord.gg",
+          "media.discordapp.net",
+          "discord-activities.com"
+        ],
+        "outbound": "nl-hy2"
+      },
+      {
+        "ip_cidr": [
+          "162.159.0.0/16",
+          "162.159.128.0/17",
+          "104.16.0.0/13",
+          "172.64.0.0/13",
+          "5.200.14.0/24",
+          "66.22.0.0/16",
+          "34.0.0.0/16",
+          "34.1.0.0/16",
+          "34.2.0.0/16",
+          "35.207.0.0/16",
+          "35.212.0.0/16",
+          "35.213.0.0/16",
+          "35.214.0.0/16",
+          "35.215.0.0/16",
+          "35.217.0.0/16",
+          "35.219.0.0/16"
+        ],
+        "outbound": "nl-hy2"
+      }
+    ],
+    "final": "direct"
+  }
+}

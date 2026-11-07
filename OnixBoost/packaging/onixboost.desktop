@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=OnixBoost
+GenericName=Network routes
+Comment=Discord Soft + YouTube / Twitch / Telegram
+Exec=onixboost
+TryExec=onixboost
+Icon=onixboost
+Terminal=false
+Categories=Network;Utility;
+Keywords=discord;dpi;vpn;youtube;twitch;telegram;onixboost;
+StartupNotify=true
+StartupWMClass=OnixBoost
+X-GNOME-UsesNotifications=true

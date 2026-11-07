@@ -161,6 +161,12 @@ def sync_lists_bins(fs_root: Path) -> None:
             if dst.is_file() and dst.stat().st_size > 0:
                 continue
         shutil.copy2(f, LISTS / f.name)
+    # Flowseal ships dummy ipset-all (TEST-NET); real Soft IPSet is .service/ipset-service.txt
+    # (same file service.bat "Update IPSet List" installs). Without it Soft ipset sections are no-ops.
+    ipset_src = fs_root / ".service" / "ipset-service.txt"
+    if ipset_src.is_file() and ipset_src.stat().st_size > 1024:
+        shutil.copy2(ipset_src, LISTS / "ipset-all.txt")
+        print("synced ipset-all.txt from Flowseal ipset-service.txt", ipset_src.stat().st_size, "bytes")
     for f in src_bin.iterdir():
         if f.is_file():
             shutil.copy2(f, BIN / f.name)

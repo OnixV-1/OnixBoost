@@ -34,9 +34,9 @@ public static class AppUpdateChecker
     public const string ReleasesLatest = "https://github.com/OnixV-1/OnixBoost/releases/latest";
 
     /// <summary>Primary CDN — port 80 path (most ISPs allow).</summary>
-    public const string NlHttp80 = "http://85.137.63.156/onixboost";
+    public const string NlHttp80 = "http://31.42.177.124/onixboost";
     /// <summary>Legacy CDN port.</summary>
-    public const string NlHttp8891 = "http://85.137.63.156:8891";
+    public const string NlHttp8891 = "http://31.42.177.124:8891";
 
     private static readonly string[] BuiltInMirrors =
     {
@@ -50,6 +50,7 @@ public static class AppUpdateChecker
     private const string GhManifestUrl = "https://raw.githubusercontent.com/OnixV-1/OnixBoost/main/version.json";
     private const string SetupAssetName = "OnixBoost-Setup.exe";
     private const string ZipAssetName = "OnixBoost-Update.zip";
+    private const string LinuxZipAssetName = "OnixBoost-linux-x64.zip";
     private static readonly TimeSpan PerUrlTimeout = TimeSpan.FromMinutes(12);
     private static readonly TimeSpan HeadProbeTimeout = TimeSpan.FromSeconds(6);
 
@@ -166,6 +167,10 @@ public static class AppUpdateChecker
                 }
             }
 
+            // Linux has no Setup.exe — zip-only
+            if (PlatformOs.IsLinux)
+                continue;
+
             var setupPath = Path.Combine(Path.GetTempPath(), SetupAssetName);
             foreach (var url in await OrderUrlsAsync(SetupUrlCandidates(info), ct))
             {
@@ -246,10 +251,12 @@ public static class AppUpdateChecker
 
     private static async Task ApplyZipViaStagingAsync(string zipUrl, IProgress<string>? progress, CancellationToken ct)
     {
-        var tmpZip = Path.Combine(Path.GetTempPath(), ZipAssetName);
+        var zipLeaf = PlatformOs.IsLinux ? LinuxZipAssetName : ZipAssetName;
+        var tmpZip = Path.Combine(Path.GetTempPath(), zipLeaf);
         var staging = Path.Combine(AppPaths.Root, ".update-staging");
         var root = AppPaths.Root;
-        var exePath = Path.Combine(root, "OnixBoost.exe");
+        var exeName = PlatformOs.IsLinux ? "OnixBoost" : "OnixBoost.exe";
+        var exePath = Path.Combine(root, exeName);
 
         progress?.Report("Скачивание…");
         await DownloadFileAsync(zipUrl, tmpZip, progress, ct, minBytes: 1_000_000);
@@ -262,8 +269,8 @@ public static class AppUpdateChecker
         try { if (Directory.Exists(staging)) Directory.Delete(staging, true); } catch { }
         Directory.CreateDirectory(staging);
         ZipFile.ExtractToDirectory(tmpZip, staging, overwriteFiles: true);
-        if (!File.Exists(Path.Combine(staging, "OnixBoost.exe")))
-            throw new InvalidOperationException("В zip нет OnixBoost.exe");
+        if (!File.Exists(Path.Combine(staging, exeName)))
+            throw new InvalidOperationException("В zip нет " + exeName);
 
         progress?.Report("Подготовка…");
         await Task.Yield();
@@ -278,9 +285,39 @@ public static class AppUpdateChecker
 
     private static void ScheduleStagingSwap(string root, string staging, string exePath)
     {
+        var pid = Environment.ProcessId;
+        if (PlatformOs.IsLinux)
+        {
+            var sh = Path.Combine(Path.GetTempPath(), "onixboost-apply-update.sh");
+            File.WriteAllText(sh, $"""
+                #!/bin/bash
+                ROOT="{root.TrimEnd('/')}"
+                STAGING="{staging.TrimEnd('/')}"
+                EXE="{exePath}"
+                while kill -0 {pid} 2>/dev/null; do sleep 1; done
+                sleep 2
+                cp -a "$STAGING"/. "$ROOT"/
+                rm -rf "$ROOT/.update-staging"
+                chmod +x "$EXE" "$ROOT/dpi/bin/nfqws" "$ROOT/dpi/core/sing-box" 2>/dev/null || true
+                nohup "$EXE" >/dev/null 2>&1 &
+                rm -f -- "$0"
+                """);
+            try { Process.Start("chmod", "+x " + sh)?.WaitForExit(2000); } catch { }
+            var psi = new ProcessStartInfo
+            {
+                FileName = "/bin/bash",
+                Arguments = sh,
+                WorkingDirectory = root,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            if (Process.Start(psi) == null)
+                throw new InvalidOperationException("Не удалось запустить скрипт обновления");
+            return;
+        }
+
         var bat = Path.Combine(Path.GetTempPath(), "onixboost-apply-update.cmd");
         static string Q(string p) => "\"" + p.Replace("\"", "") + "\"";
-        var pid = Environment.ProcessId;
         File.WriteAllText(bat, $"""
             @echo off
             setlocal EnableExtensions
@@ -297,7 +334,7 @@ public static class AppUpdateChecker
             start "" "%EXE%"
             del /F /Q "%~f0" >nul 2>&1
             """);
-        var psi = new ProcessStartInfo
+        var psiWin = new ProcessStartInfo
         {
             FileName = "cmd.exe",
             Arguments = "/c start \"onix-upd\" /min cmd.exe /c " + Q(bat),
@@ -306,7 +343,7 @@ public static class AppUpdateChecker
             UseShellExecute = false,
             WindowStyle = ProcessWindowStyle.Hidden
         };
-        if (Process.Start(psi) == null)
+        if (Process.Start(psiWin) == null)
             throw new InvalidOperationException("Не удалось запустить скрипт обновления");
     }
 
@@ -495,13 +532,14 @@ public static class AppUpdateChecker
         }
 
         Add(info.ZipUrl);
+        var zipName = PlatformOs.IsLinux ? LinuxZipAssetName : ZipAssetName;
         foreach (var m in MirrorBases(info))
-            Add(m.TrimEnd('/') + "/" + ZipAssetName);
+            Add(m.TrimEnd('/') + "/" + zipName);
 
         var ver = Normalize(info.Version);
-        var gh = $"https://github.com/{RepoOwner}/{RepoName}/releases/download/v{ver}/{ZipAssetName}";
+        var gh = $"https://github.com/{RepoOwner}/{RepoName}/releases/download/v{ver}/{zipName}";
         Add(gh);
-        Add($"https://github.com/{RepoOwner}/{RepoName}/releases/latest/download/{ZipAssetName}");
+        Add($"https://github.com/{RepoOwner}/{RepoName}/releases/latest/download/{zipName}");
         Add("https://ghfast.top/" + gh);
         Add("https://mirror.ghproxy.com/" + gh);
         return list;
@@ -569,6 +607,11 @@ public static class AppUpdateChecker
 
     private static async Task<UpdateInfo?> TryGitHubReleaseAsync(CancellationToken ct)
     {
+        // Windows: only /releases/latest with Setup/Update (stable track).
+        // Linux: scan recent releases for OnixBoost-linux-x64.zip (may be prerelease).
+        if (PlatformOs.IsLinux)
+            return await TryGitHubLinuxReleaseAsync(ct);
+
         using var req = new HttpRequestMessage(HttpMethod.Get, ApiLatest);
         using var resp = await Http.SendAsync(req, ct);
         if (!resp.IsSuccessStatusCode) return null;
@@ -590,9 +633,56 @@ public static class AppUpdateChecker
                     setupUrl = url;
             }
         }
-        setupUrl ??= $"https://github.com/{RepoOwner}/{RepoName}/releases/download/{tag}/{SetupAssetName}";
+
+        // Never invent Setup URL for a Linux-only tag — that made Win offer 2.10.x.
+        if (string.IsNullOrEmpty(setupUrl) && string.IsNullOrEmpty(zipUrl))
+        {
+            LogLine("github latest " + ver + " has no Windows Setup/Update — skip");
+            return null;
+        }
+
         var notes = root.TryGetProperty("body", out var body) ? body.GetString() : null;
-        return new UpdateInfo(ver, setupUrl, zipUrl, notes, BuiltInMirrors);
+        return new UpdateInfo(ver, setupUrl ?? "", zipUrl, notes, BuiltInMirrors);
+    }
+
+    /// <summary>Newest GitHub release (incl. prerelease) that ships the Linux zip.</summary>
+    private static async Task<UpdateInfo?> TryGitHubLinuxReleaseAsync(CancellationToken ct)
+    {
+        const string listUrl =
+            "https://api.github.com/repos/" + RepoOwner + "/" + RepoName + "/releases?per_page=20";
+        using var req = new HttpRequestMessage(HttpMethod.Get, listUrl);
+        using var resp = await Http.SendAsync(req, ct);
+        if (!resp.IsSuccessStatusCode) return null;
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+        if (doc.RootElement.ValueKind != JsonValueKind.Array) return null;
+
+        foreach (var rel in doc.RootElement.EnumerateArray())
+        {
+            if (rel.TryGetProperty("draft", out var draft) && draft.GetBoolean())
+                continue;
+            string? linuxZip = null;
+            if (rel.TryGetProperty("assets", out var assets))
+            {
+                foreach (var a in assets.EnumerateArray())
+                {
+                    var name = a.GetProperty("name").GetString() ?? "";
+                    if (!name.Equals(LinuxZipAssetName, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    linuxZip = a.GetProperty("browser_download_url").GetString();
+                    break;
+                }
+            }
+            if (string.IsNullOrEmpty(linuxZip)) continue;
+
+            var tag = rel.GetProperty("tag_name").GetString() ?? "";
+            var ver = Normalize(tag);
+            var notes = rel.TryGetProperty("body", out var body) ? body.GetString() : null;
+            LogLine("github linux release " + ver);
+            return new UpdateInfo(ver, "", linuxZip, notes, BuiltInMirrors);
+        }
+
+        LogLine("github: no release with linux zip");
+        return null;
     }
 
     private static async Task<UpdateInfo?> TryManifestAsync(string manifestUrl, CancellationToken ct)
@@ -600,19 +690,10 @@ public static class AppUpdateChecker
         using var resp = await Http.GetAsync(manifestUrl, ct);
         if (!resp.IsSuccessStatusCode) return null;
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
-        var ver = Normalize(doc.RootElement.GetProperty("version").GetString() ?? "");
-        var setupUrl = doc.RootElement.TryGetProperty("url", out var u)
-            ? u.GetString()
-            : null;
-        setupUrl ??= NlHttp80 + "/" + SetupAssetName;
-        string? zipUrl = null;
-        if (doc.RootElement.TryGetProperty("zip", out var z))
-            zipUrl = z.GetString();
-        zipUrl ??= NlHttp80 + "/" + ZipAssetName;
-        var notes = doc.RootElement.TryGetProperty("notes", out var n) ? n.GetString() : null;
+        var root = doc.RootElement;
 
         var mirrors = new List<string>();
-        if (doc.RootElement.TryGetProperty("mirrors", out var mArr) && mArr.ValueKind == JsonValueKind.Array)
+        if (root.TryGetProperty("mirrors", out var mArr) && mArr.ValueKind == JsonValueKind.Array)
         {
             foreach (var el in mArr.EnumerateArray())
             {
@@ -623,6 +704,37 @@ public static class AppUpdateChecker
         foreach (var b in BuiltInMirrors)
             if (!mirrors.Contains(b, StringComparer.OrdinalIgnoreCase))
                 mirrors.Add(b);
+
+        var notes = root.TryGetProperty("notes", out var n) ? n.GetString() : null;
+
+        // Split tracks: Windows = version/url/zip ; Linux = linux_version/linux_zip
+        if (PlatformOs.IsLinux)
+        {
+            var linuxVer = root.TryGetProperty("linux_version", out var lv)
+                ? Normalize(lv.GetString() ?? "")
+                : "";
+            if (string.IsNullOrEmpty(linuxVer) && root.TryGetProperty("version", out var vFallback))
+                linuxVer = Normalize(vFallback.GetString() ?? "");
+
+            string? linuxZip = null;
+            if (root.TryGetProperty("linux_zip", out var lz))
+                linuxZip = lz.GetString();
+            if (string.IsNullOrWhiteSpace(linuxZip) || string.IsNullOrEmpty(linuxVer))
+            {
+                LogLine("manifest " + HostOf(manifestUrl) + ": no linux_version/linux_zip — skip");
+                return null;
+            }
+
+            return new UpdateInfo(linuxVer, "", linuxZip, notes, mirrors);
+        }
+
+        var ver = Normalize(root.GetProperty("version").GetString() ?? "");
+        var setupUrl = root.TryGetProperty("url", out var u) ? u.GetString() : null;
+        setupUrl ??= NlHttp80 + "/" + SetupAssetName;
+        string? zipUrl = null;
+        if (root.TryGetProperty("zip", out var z))
+            zipUrl = z.GetString();
+        zipUrl ??= NlHttp80 + "/" + ZipAssetName;
 
         return new UpdateInfo(ver, setupUrl!, zipUrl, notes, mirrors);
     }
@@ -656,6 +768,7 @@ public static class AppUpdateChecker
     {
         var handler = new SocketsHttpHandler
         {
+            UseProxy = false,
             AllowAutoRedirect = true,
             MaxAutomaticRedirections = 15,
             AutomaticDecompression = DecompressionMethods.All,

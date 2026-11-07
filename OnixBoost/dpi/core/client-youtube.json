@@ -1,0 +1,122 @@
+{
+  "log": {
+    "level": "warn",
+    "timestamp": true,
+    "output": "core-youtube.log"
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "udp",
+        "tag": "ydns",
+        "server": "77.88.8.8"
+      },
+      {
+        "type": "udp",
+        "tag": "dns-hy2",
+        "server": "8.8.8.8",
+        "detour": "nl-hy2"
+      }
+    ],
+    "rules": [
+      {
+        "domain_suffix": [
+          "youtube.com",
+          "youtu.be",
+          "googlevideo.com",
+          "ytimg.com",
+          "ggpht.com",
+          "gstatic.com",
+          "googleusercontent.com",
+          "googleapis.com",
+          "gvt1.com"
+        ],
+        "server": "dns-hy2"
+      }
+    ],
+    "strategy": "ipv4_only"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-svc",
+      "interface_name": "OnixBoostSvc",
+      "address": [
+        "172.19.0.13/30"
+      ],
+      "mtu": 1280,
+      "auto_route": true,
+      "strict_route": false,
+      "stack": "system",
+      "route_exclude_address": [
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "224.0.0.0/4",
+        "194.76.154.176/32"
+      ]
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "hysteria2",
+      "tag": "nl-hy2",
+      "server": "194.76.154.176",
+      "server_port": 443,
+      "password": "L7bnAtINJsjoxOLIcljIgoORjBbfOX2sLr4XmUco",
+      "tls": {
+        "enabled": true,
+        "server_name": "onixboost.local",
+        "insecure": true
+      }
+    }
+  ],
+  "route": {
+    "default_domain_resolver": "ydns",
+    "auto_detect_interface": true,
+    "rules": [
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      {
+        "inbound": "tun-svc",
+        "action": "sniff",
+        "timeout": "800ms"
+      },
+      {
+        "domain_suffix": [
+          "youtube.com",
+          "youtu.be",
+          "yt.be",
+          "youtubekids.com",
+          "youtube-nocookie.com",
+          "youtube.googleapis.com",
+          "youtubei.googleapis.com",
+          "youtubeembeddedplayer.googleapis.com",
+          "googlevideo.com",
+          "redirector.googlevideo.com",
+          "ytimg.com",
+          "ggpht.com",
+          "googleusercontent.com",
+          "gvt1.com",
+          "gstatic.com",
+          "wide-youtube.l.google.com",
+          "youtube-ui.l.google.com",
+          "yt-video-upload.l.google.com",
+          "ytimg.l.google.com",
+          "jnn-pa.googleapis.com",
+          "googleapis.com"
+        ],
+        "outbound": "nl-hy2"
+      }
+    ],
+    "final": "direct"
+  }
+}

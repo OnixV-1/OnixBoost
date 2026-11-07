@@ -64,18 +64,20 @@ public static class ProcessLocker
             {
                 last = ex;
                 KillByName("winws");
+                KillByName("nfqws");
                 await Task.Delay(350 + i * 200);
             }
             catch (UnauthorizedAccessException ex)
             {
                 last = ex;
                 KillByName("winws");
+                KillByName("nfqws");
                 await Task.Delay(350 + i * 200);
             }
         }
 
         throw new IOException(
-            $"Файл занят другой программой:\n{dst}\n\nЗакрой OnixBoost / нажми STOP / заверши winws в Диспетчере задач, затем повтори.",
+            $"Файл занят другой программой:\n{dst}\n\nЗакрой OnixBoost / нажми STOP / заверши Soft (winws/nfqws), затем повтори.",
             last);
     }
 

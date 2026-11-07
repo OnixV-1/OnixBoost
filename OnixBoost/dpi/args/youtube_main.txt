@@ -1,3 +1,4 @@
+--wf-tcp=80,443 --wf-udp=443
 --filter-udp=443
 --hostlist=%ROOT%lists\list-google.txt
 --hostlist-exclude=%ROOT%lists\list-exclude.txt

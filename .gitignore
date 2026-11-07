@@ -10,3 +10,5 @@ OnixBoost/dpi/stack/
 *.exe
 *.dll
 !OnixBoost/Assets/**
+OnixBoost/dpi/core/sing-box
+OnixBoost/dpi/lists/*.megaset-bak

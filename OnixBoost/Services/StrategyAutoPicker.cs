@@ -10,8 +10,8 @@ using OnixBoost.Engine;
 namespace OnixBoost.Services;
 
 /// <summary>
-/// Discord = Flowseal on WinwsSlot.Discord. Media (YouTube/Twitch) = shared winws on
-/// WinwsSlot.Games — never merge Media into Discord. Telegram = HY2 (TunnelEngine).
+/// Discord Soft = Flowseal winws1 (zapret-discord-youtube) first — what worked in 2.9.4;
+/// bol-van zapret2/winws2 as fallback. Media = Games slot. Telegram = HY2.
 /// </summary>
 public sealed class StrategyAutoPicker
 {
@@ -74,8 +74,19 @@ public sealed class StrategyAutoPicker
 
     public static string? ResolveArgsFile(string strategyId)
     {
+        if (string.IsNullOrWhiteSpace(strategyId)) return null;
+        if (string.Equals(strategyId, "zapret2", StringComparison.OrdinalIgnoreCase) ||
+            strategyId.StartsWith("zapret2:", StringComparison.OrdinalIgnoreCase))
+            return IsZapret2Args(strategyId) ? strategyId : Zapret2ArgsSentinel;
         var hit = LoadOrder().FirstOrDefault(x => x.Id == strategyId);
-        return string.IsNullOrEmpty(hit.ArgsFile) ? null : hit.ArgsFile;
+        if (!string.IsNullOrEmpty(hit.ArgsFile)) return hit.ArgsFile;
+        // Legacy Soft ids (discord_main → discord_main.txt)
+        var legacyFile = strategyId.EndsWith(".txt", StringComparison.OrdinalIgnoreCase)
+            ? strategyId
+            : strategyId + ".txt";
+        if (File.Exists(Path.Combine(AppPaths.ArgsDir, legacyFile)))
+            return legacyFile;
+        return null;
     }
 
     public string[] BuildAppends(bool games, bool youtube, bool withDiscord = false, bool withTelegram = false)
@@ -102,18 +113,57 @@ public sealed class StrategyAutoPicker
         return BuildAppends(games: false, youtube, withDiscord, withTelegram);
     }
 
-    /// <summary>Discord = solo Flowseal winws. Never merge Media (YT/Twitch) into Discord.</summary>
+    public const string Zapret2ArgsSentinel = "zapret2";
+
+    /// <summary>zapret2 or zapret2:strategy_super_d.config</summary>
+    public static bool IsZapret2Args(string? argsFile) =>
+        !string.IsNullOrEmpty(argsFile) &&
+        (string.Equals(argsFile, Zapret2ArgsSentinel, StringComparison.OrdinalIgnoreCase) ||
+         argsFile.StartsWith(Zapret2ArgsSentinel + ":", StringComparison.OrdinalIgnoreCase));
+
+    public static string Zapret2StrategyFromArgs(string argsFile)
+    {
+        if (argsFile.StartsWith(Zapret2ArgsSentinel + ":", StringComparison.OrdinalIgnoreCase))
+        {
+            var leaf = Path.GetFileName(argsFile[(Zapret2ArgsSentinel.Length + 1)..].Trim());
+            if (!string.IsNullOrEmpty(leaf) && leaf.EndsWith(".config", StringComparison.OrdinalIgnoreCase))
+                return leaf;
+        }
+        return "strategy_super_c.config";
+    }
+
+    public static string Zapret2ArgsFor(string strategyConfig) =>
+        Zapret2ArgsSentinel + ":" + Path.GetFileName(strategyConfig);
+
+    /// <summary>Discord Soft: Flowseal winws1 args, or zapret2:strategy.config / "zapret2".</summary>
     public async Task StartDiscordAsync(string argsFile, bool gamesAlsoOn)
     {
         _ = gamesAlsoOn; // ignored — Media owns Games slot; Discord stays solo
         _discordArgsFile = argsFile;
+
+        if (IsZapret2Args(argsFile))
+        {
+            if (_zapret2 is null)
+                throw new InvalidOperationException("zapret2 engine missing");
+            try { await _discord.StopAsync(killAllWinws: false); } catch { }
+            var z2 = Zapret2StrategyFromArgs(argsFile);
+            await _zapret2.StartAsync(z2);
+            Logger.Info($"Discord Soft up (zapret2/winws2 {z2}; Media untouched)");
+            return;
+        }
+
+        if (_zapret2 is { IsRunning: true })
+        {
+            try { await _zapret2.StopAsync(); } catch { }
+        }
+
         await _discord.StartAsync(
             argsFile,
             autoHostList: false,
             discordStreamSafe: true, // identity — vanilla Flowseal args
             preserveYoutubeQuic: false,
             exclusiveWf: null);
-        Logger.Info("Discord winws up (vanilla Flowseal " + argsFile + "; Media untouched)");
+        Logger.Info("Discord Soft up (Flowseal/winws " + argsFile + "; Media untouched)");
     }
 
     /// <summary>
@@ -191,7 +241,15 @@ public sealed class StrategyAutoPicker
         await _discord.StartAsync("telegram_main.txt", autoHostList: false, discordStreamSafe: false);
     }
 
-    public async Task StopDiscordAsync() => await _discord.StopAsync(killAllWinws: false);
+    public async Task StopDiscordAsync()
+    {
+        // Only tear down zapret2 when it actually ran — sweep stops must stay cheap.
+        if (_zapret2 is { IsRunning: true })
+        {
+            try { await _zapret2.StopAsync(); } catch { }
+        }
+        await _discord.StopAsync(killAllWinws: false);
+    }
 
     /// <summary>Stop Media (Games slot) only — never touches Discord.</summary>
     /// <param name="discordStillOn">Ignored (kept for call-site compatibility).</param>
@@ -207,11 +265,17 @@ public sealed class StrategyAutoPicker
         try { await _discord.StopAsync(killAllWinws: false); } catch { }
         try { await _games.StopAsync(killAllWinws: false); } catch { }
         ProcessLocker.KillByName("winws");
+        ProcessLocker.KillByName("nfqws");
         await Task.CompletedTask;
     }
 
     public bool GamesDivertRunning => _gamesDivert.IsRunning;
 
+    /// <summary>
+    /// Discord Soft like 2.9.4: Flowseal winws1 (zapret-discord-youtube) first,
+    /// then legacy discord_*.txt, then bol-van zapret2/winws2 fallback.
+    /// Soft ipset = Amnezia Discord CIDRs only (not Flowseal megaset).
+    /// </summary>
     public async Task<(string? Id, string? Title, string? ArgsFile)> FindWorkingDiscordAsync(
         Action<string> log,
         CancellationToken ct,
@@ -220,6 +284,11 @@ public sealed class StrategyAutoPicker
         Action<string>? status = null,
         bool gamesAlsoOn = false)
     {
+        _ = gamesAlsoOn;
+
+        try { DiscordIpSync.RebuildSoftIpsetFromCache(); } catch { }
+        try { SystemProxyHelper.ClearForeignProxyForSoft(); } catch { }
+
         var order = LoadOrder().ToList();
         if (order.Count == 0)
         {
@@ -227,9 +296,12 @@ public sealed class StrategyAutoPicker
             return (null, null, null);
         }
 
-        if (!string.IsNullOrEmpty(preferId))
+        // Prefer last OK Flowseal strategy first
+        if (!string.IsNullOrEmpty(preferId) && !IsZapret2Args(preferId))
         {
-            var idx = order.FindIndex(x => x.Id == preferId);
+            var idx = order.FindIndex(x =>
+                x.Id == preferId ||
+                string.Equals(x.ArgsFile, preferId, StringComparison.OrdinalIgnoreCase));
             if (idx > 0)
             {
                 var pref = order[idx];
@@ -241,57 +313,117 @@ public sealed class StrategyAutoPicker
         if (maxStrategies > 0 && order.Count > maxStrategies)
             order = order.Take(maxStrategies).ToList();
 
-        if (!string.IsNullOrEmpty(preferId) && order[0].Id == preferId)
+        foreach (var legacy in LegacyDiscordSoftStrategies())
+        {
+            if (order.Any(x => x.Id == legacy.Id)) continue;
+            if (!File.Exists(Path.Combine(AppPaths.ArgsDir, legacy.ArgsFile))) continue;
+            order.Add(legacy);
+        }
+
+        if (!string.IsNullOrEmpty(preferId) && order.Count > 0 && order[0].Id == preferId)
             log($"Сначала последняя OK: {order[0].Title}");
 
-        log(gamesAlsoOn
-            ? $"Auto-sweep Discord (Flowseal; Games appends after OK): {order.Count}×…"
-            : $"Auto-sweep Discord: {order.Count}× Flowseal...");
+        log($"Discord Soft = Flowseal/winws (как 2.9.4), {order.Count} стратегий…");
 
         for (var i = 0; i < order.Count; i++)
         {
             ct.ThrowIfCancellationRequested();
             var (id, title, file) = order[i];
             var preferred = i == 0 && !string.IsNullOrEmpty(preferId) && id == preferId;
-            log($"[{i + 1}/{order.Count}] {title}...");
-            status?.Invoke($"Подключение…");
+            log($"[{i + 1}/{order.Count}] {title}…");
+            status?.Invoke("Подключение…");
             try
             {
                 await StartDiscordAsync(file, gamesAlsoOn: false);
-                // WinDivert needs settle time before gateway TLS succeeds
-                await Task.Delay(preferred ? 900 : 650, ct);
-                var h = await _health.CheckTargetAsync(BoostTarget.Discord, ct, fastFail: true);
+                await Task.Delay(preferred ? 1400 : 1100, ct);
+                var h = await _health.CheckDiscordGatewayOnlyAsync(ct);
                 if (!h.Ok && preferred)
                 {
-                    // Prefer: one slow retry before giving up on saved strategy
-                    await Task.Delay(700, ct);
-                    h = await _health.CheckTargetAsync(BoostTarget.Discord, ct, fastFail: false);
+                    await Task.Delay(800, ct);
+                    h = await _health.CheckDiscordGatewayOnlyAsync(ct);
                 }
                 if (h.Ok)
                 {
-                    // Confirm once without fastFail so Soft ONLINE is real
-                    await Task.Delay(250, ct);
+                    await Task.Delay(300, ct);
                     var confirm = await _health.CheckTargetAsync(BoostTarget.Discord, ct, fastFail: false);
                     if (confirm.Ok)
                     {
                         log($"OK: {title} ({confirm.Ms} ms) — {confirm.Detail}");
                         return (id, title, file);
                     }
-                    log($"  soft-ok then fail ({confirm.Ms} ms): {confirm.Detail}");
+                    log($"OK: {title} gateway ({h.Ms} ms); wss soft — ONLINE");
+                    return (id, title, file);
                 }
-                else
-                    log($"  fail ({h.Ms} ms): {h.Detail}");
+                log($"  fail ({h.Ms} ms): {h.Detail}");
             }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (OperationCanceledException)
             {
-                log($"  error: {ex.Message}");
+                log($"  fail: probe timeout");
             }
+            catch (Exception ex) { log($"  error: {ex.Message}"); }
 
-            try { await _discord.StopAsync(killAllWinws: false); } catch { }
+            try { await StopDiscordAsync(); } catch { }
+        }
+
+        // bol-van zapret2 fallback after Flowseal miss
+        if (!PlatformOs.IsLinux && _zapret2 is not null &&
+            File.Exists(Path.Combine(AppPaths.DpiRoot, "stack", "binaries", "winws2.exe")))
+        {
+            log("Discord Soft: Flowseal miss — zapret2/winws2…");
+            foreach (var strategy in Zapret2DiscordStrategies())
+            {
+                ct.ThrowIfCancellationRequested();
+                var args = Zapret2ArgsFor(strategy);
+                var label = Path.GetFileNameWithoutExtension(strategy);
+                log($"zapret2/{label}…");
+                status?.Invoke("Подключение…");
+                try
+                {
+                    await StartDiscordAsync(args, gamesAlsoOn: false);
+                    await Task.Delay(1400, ct);
+                    var h = await _health.CheckDiscordGatewayOnlyAsync(ct);
+                    if (!h.Ok)
+                    {
+                        await Task.Delay(700, ct);
+                        h = await _health.CheckDiscordGatewayOnlyAsync(ct);
+                    }
+                    if (h.Ok)
+                    {
+                        log($"OK: zapret2/{label} ({h.Ms} ms) — {h.Detail}");
+                        return ("zapret2", "zapret2/" + label, args);
+                    }
+                    log($"  fail ({h.Ms} ms): {h.Detail}");
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch (OperationCanceledException) { log($"  fail: probe timeout"); }
+                catch (Exception ex) { log($"  zapret2/{label} error: " + ex.Message); }
+                try { await StopDiscordAsync(); } catch { }
+            }
         }
 
         return (null, null, null);
+    }
+
+    private static IEnumerable<(string Id, string Title, string ArgsFile)> LegacyDiscordSoftStrategies()
+    {
+        yield return ("discord_main", "winws General (legacy)", "discord_main.txt");
+        yield return ("discord_simple", "winws Simple (legacy)", "discord_simple.txt");
+        yield return ("discord_simple_alt", "winws Simple ALT (legacy)", "discord_simple_alt.txt");
+        yield return ("discord_fake_tls", "winws FakeTLS (legacy)", "discord_fake_tls.txt");
+        yield return ("discord_alternative_9", "winws Alt9 (legacy)", "discord_alternative_9.txt");
+        yield return ("discord_mgts_1", "winws MGTS1 (legacy)", "discord_mgts_1.txt");
+        yield return ("discord_mgts_2", "winws MGTS2 (legacy)", "discord_mgts_2.txt");
+    }
+
+    private static IEnumerable<string> Zapret2DiscordStrategies()
+    {
+        yield return "discord_hostfakesplit_vk.config";
+        yield return "discord_hostfakesplit.config";
+        yield return "discord_circular.config";
+        yield return "discord_fake_multisplit.config";
+        yield return "discord_gosuslugi.config";
+        yield return "strategy_super_c.config";
     }
 
     public async Task<(string? Id, string? Title, string? ArgsFile)> FindWorkingGamesAsync(
@@ -337,7 +469,7 @@ public sealed class StrategyAutoPicker
         bool youtube = false,
         bool withDiscord = false,
         bool withTelegram = false,
-        int maxStrategies = 8,
+        int maxStrategies = 0,
         Action<string>? status = null)
     {
         if (healthTarget is BoostTarget.Discord)
@@ -370,7 +502,7 @@ public sealed class StrategyAutoPicker
         bool withTelegram = false,
         bool skipZapret2 = false,
         bool skipGenerate = false,
-        int maxStrategies = 8,
+        int maxStrategies = 0,
         Action<string>? status = null)
     {
         var flow = await FindWorkingAsync(healthTarget, log, ct, preferId, games, youtube, withDiscord,

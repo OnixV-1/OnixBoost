@@ -62,14 +62,20 @@ public partial class App : Application
             {
                 await Task.Run(async () =>
                 {
+                    try { ProcessNames.KillAllWorkers(); } catch { }
                     try
                     {
+                        // Short budget — Linux nft cleanup is best-effort sudo -n only
                         var stop = MainWnd.StopFromTrayAsync();
-                        await Task.WhenAny(stop, Task.Delay(6000));
+                        await Task.WhenAny(stop, Task.Delay(2500));
                     }
                     catch { }
                     try { ProcessNames.KillAllWorkers(); } catch { }
                 }).ConfigureAwait(false);
+            }
+            else
+            {
+                try { ProcessNames.KillAllWorkers(); } catch { }
             }
         }
         catch { }

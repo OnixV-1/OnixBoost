@@ -10,8 +10,8 @@ VER="${1:-2.8.44}"
 NL_HOST="${NL_HOST:-nl}"
 NL_DIR="/opt/onixboost/public"
 # Prefer :80 /onixboost (ISP-friendly); :8891 kept as mirror in version.json
-NL_URL="http://85.137.63.156/onixboost"
-NL_URL_LEGACY="http://85.137.63.156:8891"
+NL_URL="http://31.42.177.124/onixboost"
+NL_URL_LEGACY="http://31.42.177.124:8891"
 NOTES="${NOTES:-Обновление OnixBoost $VER}"
 
 mkdir -p "$OUT_DIR"
@@ -21,7 +21,7 @@ sed -i -E "s|<Version>[0-9.]+</Version>|<Version>$VER</Version>|" \
   "$ROOT/OnixBoost.csproj" "$SETUP/OnixBoost.Setup.csproj"
 
 echo "==> Publish OnixBoost $VER"
-dotnet publish "$ROOT/OnixBoost.csproj" -c Release -r win-x64 --self-contained true \
+dotnet publish "$ROOT/OnixBoost.csproj" -c Release -f net8.0-windows -r win-x64 --self-contained true \
   -p:PublishSingleFile=false -p:Version="$VER" -o "$PUBLISH"
 
 echo "==> Pre-ship verify"

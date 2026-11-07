@@ -19,8 +19,8 @@ public static class PathAscii
         var abs = Path.GetFullPath(absolutePath);
         var from = Path.GetFullPath(fromDir);
         var rel = Path.GetRelativePath(from, abs);
-        // winws prefers backslash on Windows
-        return rel.Replace('/', '\\');
+        // winws prefers backslash on Windows; nfqws wants forward slash
+        return PlatformOs.IsLinux ? rel.Replace('\\', '/') : rel.Replace('/', '\\');
     }
 
     public static Encoding CmdEncoding =>
