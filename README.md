@@ -100,7 +100,7 @@ Get-FileHash .\OnixBoost-Setup.exe -Algorithm SHA256
 
 | Карточка | Как работает |
 |----------|--------------|
-| **Discord** | Soft DPI (winws + WinDivert) — без TUN |
+| **Discord** | Soft DPI (winws + WinDivert) |
 | **YouTube / Twitch** | mixed-прокси + WinINET PAC |
 | **Telegram** | selective TUN (wintun) |
 
