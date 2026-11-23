@@ -1,0 +1,87 @@
+{
+  "log": {
+    "level": "warn",
+    "timestamp": true,
+    "output": "core-twitch.log"
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "udp",
+        "tag": "tdns",
+        "server": "77.88.8.8"
+      }
+    ],
+    "strategy": "ipv4_only"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-svc",
+      "interface_name": "OnixBoostSvc",
+      "address": [
+        "172.19.0.13/30"
+      ],
+      "mtu": 1200,
+      "auto_route": true,
+      "strict_route": false,
+      "stack": "system",
+      "route_exclude_address": [
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "224.0.0.0/4",
+        "194.76.154.176/32"
+      ]
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "hysteria2",
+      "tag": "nl-hy2",
+      "server": "194.76.154.176",
+      "server_port": 443,
+      "password": "L7bnAtINJsjoxOLIcljIgoORjBbfOX2sLr4XmUco",
+      "tls": {
+        "enabled": true,
+        "server_name": "onixboost.local",
+        "insecure": true
+      }
+    }
+  ],
+  "route": {
+    "default_domain_resolver": "tdns",
+    "auto_detect_interface": true,
+    "rules": [
+      {
+        "inbound": "tun-svc",
+        "action": "sniff",
+        "timeout": "800ms"
+      },
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      {
+        "domain_suffix": [
+          "twitch.tv",
+          "twitchcdn.net",
+          "ext-twitch.tv",
+          "jtvnw.net",
+          "ttvnw.net",
+          "ttcdn.net",
+          "live-video.net",
+          "twitch-live.s3.amazonaws.com"
+        ],
+        "outbound": "nl-hy2"
+      }
+    ],
+    "final": "direct"
+  }
+}

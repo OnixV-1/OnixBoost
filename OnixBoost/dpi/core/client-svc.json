@@ -1,0 +1,56 @@
+{
+  "log": {
+    "level": "info",
+    "timestamp": true,
+    "output": "core-media.log"
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "udp",
+        "tag": "dns1",
+        "server": "8.8.8.8",
+        "detour": "nl-hy2"
+      }
+    ],
+    "strategy": "ipv4_only"
+  },
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "mixed-media",
+      "listen": "127.0.0.1",
+      "listen_port": 17890
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "hysteria2",
+      "tag": "nl-hy2",
+      "server": "194.76.154.176",
+      "server_port": 443,
+      "password": "L7bnAtINJsjoxOLIcljIgoORjBbfOX2sLr4XmUco",
+      "tls": {
+        "enabled": true,
+        "server_name": "onixboost.local",
+        "insecure": true
+      }
+    }
+  ],
+  "route": {
+    "default_domain_resolver": "dns1",
+    "auto_detect_interface": true,
+    "rules": [
+      {
+        "inbound": "mixed-media",
+        "action": "sniff",
+        "timeout": "800ms"
+      }
+    ],
+    "final": "direct"
+  }
+}

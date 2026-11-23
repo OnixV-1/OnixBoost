@@ -1,0 +1,21 @@
+--wf-tcp=80,443 --wf-udp=443
+--filter-udp=443
+--hostlist=%ROOT%lists\list-twitch.txt
+--hostlist-exclude=%ROOT%lists\list-exclude.txt
+--hostlist-exclude=%ROOT%lists\list-exclude-user.txt
+--ipset-exclude=%ROOT%lists\ipset-exclude.txt
+--ipset-exclude=%ROOT%lists\ipset-exclude-user.txt
+--dpi-desync=fake
+--dpi-desync-repeats=6
+--dpi-desync-fake-quic=%VBIN%quic_initial_www_google_com.bin
+--new
+--filter-tcp=80,443
+--hostlist=%ROOT%lists\list-twitch.txt
+--hostlist-exclude=%ROOT%lists\list-exclude.txt
+--hostlist-exclude=%ROOT%lists\list-exclude-user.txt
+--ipset-exclude=%ROOT%lists\ipset-exclude.txt
+--ipset-exclude=%ROOT%lists\ipset-exclude-user.txt
+--dpi-desync=multisplit
+--dpi-desync-split-seqovl=568
+--dpi-desync-split-pos=1
+--dpi-desync-split-seqovl-pattern=%VBIN%tls_clienthello_www_google_com.bin

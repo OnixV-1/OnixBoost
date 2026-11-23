@@ -1,0 +1,7 @@
+# OPTIONAL / unused by default (2.8.70+).
+# Multisplit on Steam CDN breaks the in-client store for most ISPs.
+# Games card uses games_main only; Steam = ISP passthrough via list-exclude + ipset-exclude.
+# Keep file for manual/experimental profiles only.
+--wf-tcp=80,443,27015-27050 --wf-udp=443,27015-27050
+--filter-udp=443 --hostlist=%ROOT%lists\list-steam.txt --hostlist-exclude=%ROOT%lists\list-exclude.txt --dpi-desync=fake --dpi-desync-repeats=6 --dpi-desync-fake-quic=%VBIN%quic_initial_steamcommunity_com.bin --new
+--filter-tcp=80,443,27015-27050 --hostlist=%ROOT%lists\list-steam.txt --hostlist-exclude=%ROOT%lists\list-exclude.txt --dpi-desync=multisplit --dpi-desync-split-seqovl=568 --dpi-desync-split-pos=1 --dpi-desync-split-seqovl-pattern=%VBIN%tls_clienthello_www_google_com.bin

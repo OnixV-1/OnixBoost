@@ -1,0 +1,5 @@
+# User extras (survives Flowseal list sync) — Twitch + CDN
+cloudfront.net
+gstatic.com
+amazon-adsystem.com
+scorecardresearch.com

@@ -1,0 +1,137 @@
+{
+  "log": {
+    "level": "warn",
+    "timestamp": true,
+    "output": "core-media.log"
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "udp",
+        "tag": "dns1",
+        "server": "77.88.8.8"
+      }
+    ],
+    "strategy": "ipv4_only"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-media",
+      "interface_name": "OnixBoostMedia",
+      "address": [
+        "172.19.0.13/30"
+      ],
+      "mtu": 1200,
+      "auto_route": true,
+      "strict_route": false,
+      "stack": "system",
+      "route_exclude_address": [
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "224.0.0.0/4",
+        "194.76.154.176/32"
+      ]
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "hysteria2",
+      "tag": "nl-hy2",
+      "server": "194.76.154.176",
+      "server_port": 443,
+      "password": "L7bnAtINJsjoxOLIcljIgoORjBbfOX2sLr4XmUco",
+      "tls": {
+        "enabled": true,
+        "server_name": "onixboost.local",
+        "insecure": true
+      }
+    }
+  ],
+  "route": {
+    "default_domain_resolver": "dns1",
+    "auto_detect_interface": true,
+    "rules": [
+      {
+        "inbound": "tun-media",
+        "action": "sniff",
+        "timeout": "800ms"
+      },
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      {
+        "domain_suffix": [
+          "discord.com",
+          "discord.gg",
+          "discord.media",
+          "discordapp.com",
+          "discordapp.net",
+          "discord.co"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "domain_suffix": [
+          "youtube.com",
+          "youtu.be",
+          "youtubekids.com",
+          "youtube-nocookie.com",
+          "youtube.googleapis.com",
+          "youtubei.googleapis.com",
+          "youtubeembeddedplayer.googleapis.com",
+          "googlevideo.com",
+          "redirector.googlevideo.com",
+          "ytimg.com",
+          "yt3.ggpht.com",
+          "yt4.ggpht.com",
+          "wide-youtube.l.google.com",
+          "youtube-ui.l.google.com",
+          "yt-video-upload.l.google.com",
+          "jnn-pa.googleapis.com",
+          "twitch.tv",
+          "twitchcdn.net",
+          "ext-twitch.tv",
+          "assets.twitch.tv",
+          "gql.twitch.tv",
+          "jtvnw.net",
+          "ttvnw.net",
+          "ttcdn.net",
+          "t.me",
+          "telegram.me",
+          "telegram.org",
+          "telegram.dog",
+          "telegram.space",
+          "tdesktop.com",
+          "telegra.ph",
+          "telegram-cdn.org",
+          "cdn-telegram.org",
+          "stel.com",
+          "telesco.pe"
+        ],
+        "outbound": "nl-hy2"
+      },
+      {
+        "ip_cidr": [
+          "91.108.4.0/22",
+          "91.108.8.0/22",
+          "91.108.12.0/22",
+          "91.108.16.0/22",
+          "91.108.56.0/22",
+          "149.154.160.0/20",
+          "185.76.151.0/24"
+        ],
+        "outbound": "nl-hy2"
+      }
+    ],
+    "final": "direct"
+  }
+}

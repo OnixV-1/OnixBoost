@@ -1,0 +1,198 @@
+<div align="center">
+
+<img src="assets/logo-mark.png" width="96" alt="OnixBoost"/>
+
+# OnixBoost
+
+**Менеджер сетевых маршрутов для отдельных приложений.**  
+Windows 10/11.  
+Включайте Discord, YouTube, Twitch или Telegram по отдельности — без смены маршрутизации всей системы.
+
+<p>
+  <img src="OnixBoost/Assets/icon-discord.png" width="46" alt="Discord" title="Discord"/>
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="OnixBoost/Assets/icon-youtube.png" width="46" alt="YouTube" title="YouTube"/>
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="OnixBoost/Assets/icon-twitch.png" width="46" alt="Twitch" title="Twitch"/>
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="OnixBoost/Assets/icon-telegram.png" width="46" alt="Telegram" title="Telegram"/>
+</p>
+
+<p>
+  <a href="https://github.com/OnixV-1/OnixBoost/releases/latest"><img alt="Версия" src="https://img.shields.io/github/v/release/OnixV-1/OnixBoost?style=for-the-badge&labelColor=0B0D12&color=4DA3FF&display_name=release&label=%D0%B2%D0%B5%D1%80%D1%81%D0%B8%D1%8F"></a>
+  <a href="https://github.com/OnixV-1/OnixBoost/releases"><img alt="Скачиваний" src="https://img.shields.io/github/downloads/OnixV-1/OnixBoost/total?style=for-the-badge&labelColor=0B0D12&color=32DC8C&label=%D1%81%D0%BA%D0%B0%D1%87%D0%B8%D0%B2%D0%B0%D0%BD%D0%B8%D0%B9"></a>
+  <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%2F%2011-0078D6?style=for-the-badge&labelColor=0B0D12">
+  <a href="LICENSE"><img alt="Лицензия" src="https://img.shields.io/badge/license-source--available-8B9BB4?style=for-the-badge&labelColor=0B0D12"></a>
+</p>
+
+<p>
+  <a href="https://github.com/OnixV-1/OnixBoost/releases/latest/download/OnixBoost-Setup.exe"><img alt="Windows Setup" src="https://img.shields.io/badge/Windows%20Setup.exe-2563EB?style=for-the-badge&logo=windows&logoColor=white"></a>
+  &nbsp;
+  <a href="https://github.com/OnixV-1/OnixBoost/releases/latest/download/OnixBoost-linux-x64.zip"><img alt="Linux zip" src="https://img.shields.io/badge/Linux%20x64%20.zip-E95420?style=for-the-badge&logo=linux&logoColor=white"></a>
+</p>
+
+<img src="assets/app-ui-285.png" width="880" alt="OnixBoost — Discord, YouTube, Twitch, Telegram">
+
+</div>
+
+> [!CAUTION]
+> Скачивайте **только** с официальных [Releases](https://github.com/OnixV-1/OnixBoost/releases) или CDN OnixV. Сторонние сборки не проверяем.
+
+> [!WARNING]
+> Для Discord используется [WinDivert](https://reqrypt.org/windivert.html) — нужны права администратора.
+
+## Содержание
+
+- [Возможности](#возможности)
+- [Требования](#требования)
+- [Установка на Windows](#установка-на-windows)
+- [Как это работает](#как-это-работает)
+- [Безопасность и приватность](#безопасность-и-приватность)
+- [Решение проблем](#решение-проблем)
+- [Частые вопросы](#частые-вопросы)
+- [Исходный код и сборка](#исходный-код-и-сборка)
+- [Лицензия и участие](#лицензия-и-участие)
+
+---
+
+## Возможности
+
+| Сервис | Что получает пользователь |
+|--------|---------------------------|
+| **Discord** | Чаты, голосовые каналы и демонстрация экрана в обычном клиенте Discord |
+| **YouTube** | Видео и Shorts в Chrome / Edge / Chromium |
+| **Twitch** | Стримы и чат в браузере |
+| **Telegram** | Десктопный и веб-Telegram |
+
+Несколько карточек можно держать включёнными сразу. **STOP** снимает все активные правила. Обновления — кнопкой **Обновить** в приложении.
+
+---
+
+## Требования
+
+- Windows 10 / 11 (x64)
+- Права администратора
+- Интернет при первом запуске
+- Для YouTube / Twitch — Chrome или Edge
+
+---
+
+## Установка на Windows
+
+1. Скачайте [Setup.exe](https://github.com/OnixV-1/OnixBoost/releases/latest/download/OnixBoost-Setup.exe) (зеркало CDN: [Setup.exe](http://31.42.177.124/onixboost/OnixBoost-Setup.exe)).
+2. Установите и запустите OnixBoost от имени администратора.
+3. Нажмите нужную карточку и дождитесь статуса **Online**.
+4. Для YouTube / Twitch один раз перезапустите браузер.
+5. Повторное нажатие выключает профиль. Кнопка **STOP** отключает все активные правила.
+
+> Рекомендуем устанавливать в путь латиницей, например `C:\OnixBoost`.  
+> Каталоги с кириллицей или другими не-ASCII символами могут вызывать проблемы загрузки профилей.
+
+Проверка файла (SHA-256 для **3.0.5**):
+
+```powershell
+Get-FileHash .\OnixBoost-Setup.exe -Algorithm SHA256
+# ожидаемо: 30C160D0D7036B7D5917B1233C86638F51CAD23A1B8CAEDC181F54EBE0EC530F
+```
+
+---
+
+## Как это работает
+
+Каждая карточка — отдельный профиль маршрутизации. Включение влияет только на трафик выбранного сервиса; системный маршрут и другие программы не изменяются.
+
+| Карточка | Как работает |
+|----------|--------------|
+| **Discord** | Soft DPI (winws + WinDivert) |
+| **YouTube / Twitch** | mixed-прокси + WinINET PAC |
+| **Telegram** | selective TUN (wintun) |
+
+> **winws** — утилита DPI-обхода (Flowseal / bol-van zapret).  
+> **PAC** — автонастройка прокси для браузера.
+
+---
+
+## Безопасность и приватность
+
+- Права администратора нужны для сетевых фильтров и TUN.
+- Для Discord используется [WinDivert](https://reqrypt.org/windivert.html); лицензии — в [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+- OnixBoost не читает файлы, переписки, экран, буфер обмена или локальные данные приложений.
+- При активном профиле обрабатываются только сетевые пакеты, соответствующие правилам выбранной карточки.
+- Приложение не выполняет MITM-расшифровку TLS/QUIC и не сохраняет содержимое зашифрованного трафика.
+- OnixBoost не собирает пароли, содержимое переписок, историю браузера и платёжные данные.
+- Локальный `onixboost.log` содержит только служебные сообщения и может быть удалён вручную.
+
+| Назначение | Источник |
+|------------|----------|
+| Проверка обновлений | CDN OnixV / GitHub Releases этого репозитория |
+| Списки IP Discord | публичные списки конфигурации Discord (см. [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)) |
+| Профили Soft | профили, поставляемые с приложением и обновляемые вместе с ним |
+| Проверка статуса Online | прямые запросы к публичным endpoint’ам выбранного сервиса |
+
+Уязвимости — через [SECURITY.md](SECURITY.md), не через публичные Issues.
+
+---
+
+## Решение проблем
+
+| Проблема | Что сделать |
+|----------|-------------|
+| Антивирус удаляет файлы | Исключения для папки установки; см. [Безопасность](#безопасность-и-приватность) |
+| Карточка не становится Online | **STOP** → 5–10 секунд → включите карточку снова |
+| YouTube / Twitch не открываются | Перезапустите браузер после включения; проверьте системный прокси/PAC |
+| Discord не подключается | Перезапустите Discord после включения карточки |
+| Ошибка при установке | Путь латиницей, например `C:\OnixBoost` |
+| Интернет странно ведёт себя после выключения | **STOP** или выход из трея |
+
+---
+
+## Частые вопросы
+
+### Это VPN на весь компьютер?
+
+Нет. Маршрутизация меняется только для выбранных сервисов.
+
+### Повлияет ли это на игры и другие приложения?
+
+Нет. Активные профили не меняют системный маршрут по умолчанию для остального трафика.
+
+### Почему не все конфигурации в репозитории?
+
+Клиент доступен для изучения в режиме source-available. Серверные endpoint’ы, ключи и runtime-секреты не входят в публичную лицензию.
+
+---
+
+## Исходный код и сборка
+
+Клиент и установщик: Avalonia / .NET 8.
+
+```bash
+dotnet publish OnixBoost/OnixBoost.csproj -c Release -f net8.0-windows -r win-x64 --self-contained true
+```
+
+| Файл / папка | Назначение |
+|--------------|------------|
+| `OnixBoost/` | Приложение |
+| `OnixBoost.Setup/` | Установщик |
+| `OnixBoost/packaging/` | Скрипты релиза |
+| `assets/` | Логотипы и скриншот |
+| `LICENSE` | Условия использования |
+| `THIRD-PARTY-NOTICES.md` | Сторонние компоненты |
+| `SECURITY.md` | Сообщения об уязвимостях |
+| `CONTRIBUTING.md` | Участие и Pull Request |
+
+---
+
+## Лицензия и участие
+
+OnixBoost распространяется по проприетарной **source-available** лицензии.  
+Полные условия — в [LICENSE](LICENSE).
+
+- Можно использовать официальные сборки для личных целей.
+- Можно изучать публичный исходный код.
+- Нельзя распространять изменённые, пересобранные или неполные версии.
+- Серверные endpoint’ы, ключи и runtime-конфигурации не входят в публичную лицензию.
+
+Баги и идеи — [Issues](https://github.com/OnixV-1/OnixBoost/issues) ·  
+Уязвимости — [SECURITY.md](SECURITY.md) ·  
+Участие — [CONTRIBUTING.md](CONTRIBUTING.md)

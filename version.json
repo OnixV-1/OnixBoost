@@ -1,0 +1,15 @@
+{
+  "version": "3.0.6",
+  "url": "https://lk.v-onix.com/onixboost/OnixBoost-Setup.exe",
+  "zip": "https://lk.v-onix.com/onixboost/OnixBoost-Update.zip",
+  "linux_version": "3.0.6",
+  "linux_zip": "https://lk.v-onix.com/onixboost/OnixBoost-linux-x64.zip",
+  "mirrors": [
+    "https://lk.v-onix.com/onixboost",
+    "https://get.v-onix.com/onixboost",
+    "http://185.159.82.67/onixboost",
+    "http://31.42.177.124/onixboost",
+    "http://31.42.177.124:8891"
+  ],
+  "notes": "RU edge IP → 185.159.82.67. Fix Telegram/Discord/Media HY2. Linux: linux_version/linux_zip."
+}

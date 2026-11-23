@@ -1,0 +1,112 @@
+{
+  "log": {
+    "level": "warn",
+    "timestamp": true,
+    "output": "core-telegram.log"
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "udp",
+        "tag": "ydns",
+        "server": "77.88.8.8"
+      }
+    ],
+    "strategy": "ipv4_only"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-tg",
+      "interface_name": "OnixBoostTG",
+      "address": [
+        "172.19.0.5/30",
+        "fdfe:dcba:9876::5/126"
+      ],
+      "mtu": 1200,
+      "auto_route": true,
+      "strict_route": false,
+      "stack": "system",
+      "route_address": [
+        "91.108.0.0/16",
+        "149.154.160.0/20",
+        "185.76.151.0/24",
+        "95.161.64.0/20",
+        "2001:b28:f23c::/48",
+        "2001:b28:f23d::/48",
+        "2001:b28:f23f::/48",
+        "2001:67c:4e8::/48"
+      ]
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "hysteria2",
+      "tag": "nl-hy2",
+      "server": "194.76.154.176",
+      "server_port": 3443,
+      "password": "L7bnAtINJsjoxOLIcljIgoORjBbfOX2sLr4XmUco",
+      "tls": {
+        "enabled": true,
+        "server_name": "onixboost.local",
+        "insecure": true
+      }
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "default_domain_resolver": "ydns",
+    "auto_detect_interface": true,
+    "rules": [
+      {
+        "inbound": "tun-tg",
+        "action": "sniff",
+        "timeout": "800ms"
+      },
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      {
+        "domain_suffix": [
+          "t.me",
+          "telegram.me",
+          "telegram.org",
+          "telegram.dog",
+          "telegram.space",
+          "tdesktop.com",
+          "telegra.ph",
+          "telegram-cdn.org",
+          "cdn-telegram.org",
+          "stel.com",
+          "telesco.pe"
+        ],
+        "outbound": "nl-hy2"
+      },
+      {
+        "ip_cidr": [
+          "91.108.0.0/16",
+          "149.154.160.0/20",
+          "185.76.151.0/24",
+          "95.161.64.0/20",
+          "2001:b28:f23c::/48",
+          "2001:b28:f23d::/48",
+          "2001:b28:f23f::/48",
+          "2001:67c:4e8::/48"
+        ],
+        "outbound": "nl-hy2"
+      },
+      {
+        "process_name": [
+          "Telegram.exe",
+          "Telegram"
+        ],
+        "outbound": "nl-hy2"
+      }
+    ],
+    "final": "direct"
+  }
+}

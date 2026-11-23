@@ -1,0 +1,70 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFrameworks>net8.0;net8.0-windows</TargetFrameworks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>OnixBoost</AssemblyName>
+    <RootNamespace>OnixBoost</RootNamespace>
+    <Version>3.0.5</Version>
+    <ApplicationIcon>Assets\onixboost.ico</ApplicationIcon>
+    <PublishSingleFile>false</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <DebugType>embedded</DebugType>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net8.0'">
+    <DefineConstants>$(DefineConstants);LINUX</DefineConstants>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">linux-x64</RuntimeIdentifier>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.2.5" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.2.5" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.5" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.2.5" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">
+    <PackageReference Include="Divert.Windows" Version="3.0.0" />
+    <PackageReference Include="Native.WinDivert" Version="2.2.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\**" />
+    <EmbeddedResource Include="dpi\core\client.json" LogicalName="OnixBoost.Tunnel.client.json" />
+    <EmbeddedResource Include="dpi\core\client-media.json" LogicalName="OnixBoost.Tunnel.client-media.json" />
+    <EmbeddedResource Include="dpi\core\client-svc.json" LogicalName="OnixBoost.Tunnel.client-svc.json" />
+    <EmbeddedResource Include="dpi\core\client-telegram.json" LogicalName="OnixBoost.Tunnel.client-telegram.json" />
+    <EmbeddedResource Include="dpi\core\client-discord.json" LogicalName="OnixBoost.Tunnel.client-discord.json" />
+    <EmbeddedResource Include="dpi\core\client-twitch.json" LogicalName="OnixBoost.Tunnel.client-twitch.json" />
+    <EmbeddedResource Include="dpi\core\client-youtube.json" LogicalName="OnixBoost.Tunnel.client-youtube.json" />
+    <!-- Also copy to dpi/core so Update.zip overwrites stale on-disk JSON (ReadEmbeddedOrDisk prefers disk). -->
+    <None Include="dpi\core\client.json;dpi\core\client-media.json;dpi\core\client-svc.json;dpi\core\client-telegram.json;dpi\core\client-discord.json;dpi\core\client-twitch.json;dpi\core\client-youtube.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </None>
+    <None Include="dpi\**\*" Exclude="dpi\**\*.backup;dpi\core\client.json;dpi\core\client-media.json;dpi\core\client-svc.json;dpi\core\client-telegram.json;dpi\core\client-discord.json;dpi\core\client-twitch.json;dpi\core\client-youtube.json;dpi\bin\WinDivert*;dpi\bin\cygwin1.dll;dpi\bin\winws.exe;dpi\bin\_onix_start_*.cmd">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </None>
+  </ItemGroup>
+
+  <!-- Windows-only WinDivert engine: compile stub on Linux TFM -->
+  <ItemGroup Condition="'$(TargetFramework)' != 'net8.0-windows'">
+    <Compile Remove="Engine\OnixDpiEngine.cs" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">
+    <Compile Remove="Engine\OnixDpiEngine.Linux.cs" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="f1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="45%" stop-color="#d0d4dc"/>
+      <stop offset="100%" stop-color="#7a808c"/>
+    </linearGradient>
+    <linearGradient id="f2" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="40%" stop-color="#c4c9d4"/>
+      <stop offset="100%" stop-color="#5c6370"/>
+    </linearGradient>
+    <linearGradient id="f3" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="#eef1f6"/>
+      <stop offset="100%" stop-color="#8b929e"/>
+    </linearGradient>
+  </defs>
+  <rect width="100%" height="100%" fill="#0B0D12"/>
+  <polygon points="256.00,97.28 393.46,176.64 393.46,335.36 256.00,414.72 118.54,335.36 118.54,176.64"
+           fill="none" stroke="#E8EEF8" stroke-width="8" stroke-linejoin="round"/>
+  <g>
+    <polygon points="256.0,158.7 340.2,207.4 298.1,231.7 256.0,207.4" fill="url(#f1)" stroke="#3a404c" stroke-width="1.2" stroke-linejoin="round"/>
+    <polyline points="256.0,158.7 256.0,207.4" fill="none" stroke="#ffffff" stroke-width="2" stroke-opacity="0.7"/>
+    <polygon points="340.2,207.4 340.2,304.6 298.1,280.3 298.1,231.7" fill="url(#f2)" stroke="#3a404c" stroke-width="1.2" stroke-linejoin="round"/>
+    <polyline points="340.2,207.4 298.1,231.7" fill="none" stroke="#ffffff" stroke-width="2" stroke-opacity="0.7"/>
+    <polygon points="340.2,304.6 256.0,353.3 256.0,304.6 298.1,280.3" fill="url(#f3)" stroke="#3a404c" stroke-width="1.2" stroke-linejoin="round"/>
+    <polyline points="340.2,304.6 298.1,280.3" fill="none" stroke="#ffffff" stroke-width="2" stroke-opacity="0.7"/>
+    <polygon points="256.0,353.3 171.8,304.6 213.9,280.3 256.0,304.6" fill="url(#f1)" stroke="#3a404c" stroke-width="1.2" stroke-linejoin="round"/>
+    <polyline points="256.0,353.3 256.0,304.6" fill="none" stroke="#ffffff" stroke-width="2" stroke-opacity="0.7"/>
+    <polygon points="171.8,304.6 171.8,207.4 213.9,231.7 213.9,280.3" fill="url(#f2)" stroke="#3a404c" stroke-width="1.2" stroke-linejoin="round"/>
+    <polyline points="171.8,304.6 213.9,280.3" fill="none" stroke="#ffffff" stroke-width="2" stroke-opacity="0.7"/>
+    <polygon points="171.8,207.4 256.0,158.7 256.0,207.4 213.9,231.7" fill="url(#f3)" stroke="#3a404c" stroke-width="1.2" stroke-linejoin="round"/>
+    <polyline points="171.8,207.4 213.9,231.7" fill="none" stroke="#ffffff" stroke-width="2" stroke-opacity="0.7"/>
+  </g>
+  <polygon points="256.00,207.36 298.12,231.68 298.12,280.32 256.00,304.64 213.88,280.32 213.88,231.68"
+           fill="#0B0D12" stroke="#A8B0BE" stroke-width="2.5" stroke-linejoin="round"/>
+</svg>

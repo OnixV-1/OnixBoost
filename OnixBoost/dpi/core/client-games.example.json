@@ -1,0 +1,31 @@
+{
+  "log": { "level": "warn", "timestamp": true },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun",
+      "interface_name": "OnixBoost",
+      "address": ["172.19.0.1/30"],
+      "mtu": 1400,
+      "auto_route": true,
+      "strict_route": false,
+      "stack": "system"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "hysteria2",
+      "tag": "remote",
+      "server": "YOUR_SERVER",
+      "server_port": 443,
+      "password": "YOUR_PASSWORD",
+      "tls": { "enabled": true, "server_name": "YOUR_SNI", "insecure": true }
+    },
+    { "type": "direct", "tag": "direct" }
+  ],
+  "route": {
+    "auto_detect_interface": true,
+    "rules": [],
+    "final": "direct"
+  }
+}

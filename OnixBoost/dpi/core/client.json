@@ -1,0 +1,65 @@
+{
+  "log": {
+    "level": "warn",
+    "timestamp": true,
+    "output": "core.log"
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "udp",
+        "tag": "ydns",
+        "server": "77.88.8.8"
+      }
+    ],
+    "strategy": "ipv4_only"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "interface_name": "OnixBoost",
+      "address": [
+        "172.19.0.1/30"
+      ],
+      "mtu": 1400,
+      "auto_route": true,
+      "strict_route": false,
+      "stack": "mixed"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "hysteria2",
+      "tag": "nl-hy2",
+      "server": "194.76.154.176",
+      "server_port": 443,
+      "password": "L7bnAtINJsjoxOLIcljIgoORjBbfOX2sLr4XmUco",
+      "tls": {
+        "enabled": true,
+        "server_name": "onixboost.local",
+        "insecure": true
+      }
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "default_domain_resolver": "ydns",
+    "auto_detect_interface": true,
+    "final": "nl-hy2",
+    "rules": [
+      {
+        "inbound": "tun-in",
+        "action": "sniff",
+        "timeout": "1s"
+      },
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      }
+    ]
+  }
+}
