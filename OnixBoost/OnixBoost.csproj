@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>OnixBoost</AssemblyName>
     <RootNamespace>OnixBoost</RootNamespace>
-    <Version>3.0.5</Version>
+    <Version>3.0.8</Version>
     <ApplicationIcon>Assets\onixboost.ico</ApplicationIcon>
     <PublishSingleFile>false</PublishSingleFile>
     <SelfContained>true</SelfContained>

@@ -244,22 +244,28 @@ public sealed class TunnelEngine
 
         if (PlatformOs.IsLinux)
         {
+            // Only chmod when missing +x — chmod on a setcap binary can drop CAP_NET_ADMIN
+            // on some kernels, which breaks Telegram TUN after Soft already worked.
             try
             {
-                Process.Start(new ProcessStartInfo
+                var mode = File.GetUnixFileMode(CoreExe);
+                if ((mode & UnixFileMode.UserExecute) == 0)
                 {
-                    FileName = "chmod",
-                    ArgumentList = { "+x", CoreExe },
-                    UseShellExecute = false
-                })?.WaitForExit(2000);
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "chmod",
+                        ArgumentList = { "+x", CoreExe },
+                        UseShellExecute = false
+                    })?.WaitForExit(2000);
+                }
             }
             catch { }
 
             // YouTube/Twitch = mixed proxy on 127.0.0.1 — NO root/sudo.
-            // Discord/Telegram TUN need CAP_NET_ADMIN (one-time fix-caps).
+            // Discord/Telegram TUN need CAP_NET_ADMIN on sing-box (not Soft/nfqws).
             if (NeedsTunCaps && !LinuxElevate.IsRoot && !LinuxElevate.TunnelCapsReady)
             {
-                var (ok, msg) = await LinuxElevate.EnsureSoftPrivilegesAsync();
+                var (ok, msg) = await LinuxElevate.EnsureTunnelPrivilegesAsync();
                 if (!ok || !LinuxElevate.TunnelCapsReady)
                     throw new InvalidOperationException(
                         (_kind == TunnelKind.Discord ? "Discord" : "Telegram") +
@@ -365,7 +371,69 @@ public sealed class TunnelEngine
             }
         }
 
+        // Wintun often advertises 172.19.0.6 as DNS; clear it so Steam/Riot/nslookup
+        // keep using the real adapter (router), not OnixBoostTG.
+        if (_kind == TunnelKind.Telegram)
+            await ClearTunAdapterDnsAsync("OnixBoostTG");
+
         Logger.Info("NL HY2 up (" + _kind + "/" + profile + ") pid=" + proc.Id + " pac=" + _pacEnabled);
+    }
+
+    /// <summary>Drop DNS servers from the TG Wintun NIC so it is not a system resolver.</summary>
+    private static async Task ClearTunAdapterDnsAsync(string interfaceName)
+    {
+        if (!PlatformOs.IsWindows) return;
+        try
+        {
+            // ResetServerAddresses (not empty @()) — empty array is often rejected by Windows.
+            var script = $$"""
+                $ErrorActionPreference = 'Stop'
+                $n = 0
+                Get-NetAdapter -ErrorAction SilentlyContinue |
+                  Where-Object { $_.Name -like '{{interfaceName}}*' } |
+                  ForEach-Object {
+                    Set-DnsClientServerAddress -InterfaceIndex $_.ifIndex -ResetServerAddresses
+                    $left = @(Get-DnsClientServerAddress -InterfaceIndex $_.ifIndex -AddressFamily IPv4 |
+                      Select-Object -ExpandProperty ServerAddresses)
+                    if ($left.Count -gt 0) {
+                      netsh interface ipv4 set dnsservers name="$($_.Name)" static none | Out-Null
+                    }
+                    $n++
+                  }
+                Write-Output "cleared=$n"
+                """;
+            var tmp = Path.Combine(Path.GetTempPath(), "onixboost-clear-tun-dns.ps1");
+            await File.WriteAllTextAsync(tmp, script);
+            var psi = new ProcessStartInfo
+            {
+                FileName = "powershell",
+                Arguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{tmp}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            using var p = Process.Start(psi);
+            if (p == null) return;
+            var stdout = await p.StandardOutput.ReadToEndAsync();
+            var stderr = await p.StandardError.ReadToEndAsync();
+            if (!await Task.Run(() => p.WaitForExit(8000)))
+            {
+                try { p.Kill(true); } catch { }
+                Logger.Error($"ClearTunAdapterDns timeout on {interfaceName}");
+                return;
+            }
+            if (p.ExitCode != 0)
+            {
+                Logger.Error($"ClearTunAdapterDns exit={p.ExitCode} {stderr[..Math.Min(200, stderr.Length)]}");
+                return;
+            }
+            Logger.Info($"TUN DNS cleared on {interfaceName}: {stdout.Trim()}");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("ClearTunAdapterDns: " + ex.Message);
+        }
     }
 
     private static string StripAnsi(string s)

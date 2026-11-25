@@ -33,6 +33,11 @@ public static class AppUpdateChecker
     public const string RepoName = "OnixBoost";
     public const string ReleasesLatest = "https://github.com/OnixV-1/OnixBoost/releases/latest";
 
+    /// <summary>RU edge (in/lk/get) — reachable from Ertelecom when NL is filtered.</summary>
+    public const string RuEdgeHttps = "https://in.v-onix.com/onixboost";
+    public const string RuEdgeHttpsAlt = "https://lk.v-onix.com/onixboost";
+    public const string RuEdgeHttpsGet = "https://get.v-onix.com/onixboost";
+    public const string RuEdgeHttp = "http://185.159.82.67/onixboost";
     /// <summary>Primary CDN — port 80 path (most ISPs allow).</summary>
     public const string NlHttp80 = "http://31.42.177.124/onixboost";
     /// <summary>Legacy CDN port.</summary>
@@ -40,10 +45,18 @@ public static class AppUpdateChecker
 
     private static readonly string[] BuiltInMirrors =
     {
+        RuEdgeHttps,
+        RuEdgeHttpsAlt,
+        RuEdgeHttpsGet,
+        RuEdgeHttp,
         NlHttp80,
         NlHttp8891,
     };
 
+    private const string RuManifestUrl = RuEdgeHttps + "/version.json";
+    private const string RuManifestUrlAlt = RuEdgeHttpsAlt + "/version.json";
+    private const string RuManifestUrlGet = RuEdgeHttpsGet + "/version.json";
+    private const string RuManifestUrlHttp = RuEdgeHttp + "/version.json";
     private const string NlManifestUrl = NlHttp80 + "/version.json";
     private const string NlManifestUrlLegacy = NlHttp8891 + "/version.json";
     private const string ApiLatest = "https://api.github.com/repos/OnixV-1/OnixBoost/releases/latest";
@@ -96,18 +109,24 @@ public static class AppUpdateChecker
 
     public static async Task<UpdateInfo?> CheckAsync(CancellationToken ct = default)
     {
-        foreach (var manifest in new[] { NlManifestUrl, NlManifestUrlLegacy })
+        // RU edge first: Ertelecom often cannot reach NL (31.42…), so the update
+        // button never appeared for home users when only NL manifests were checked.
+        foreach (var manifest in new[]
+                 {
+                     RuManifestUrl, RuManifestUrlAlt, RuManifestUrlGet, RuManifestUrlHttp,
+                     NlManifestUrl, NlManifestUrlLegacy
+                 })
         {
             try
             {
-                var fromNl = await TryManifestAsync(manifest, ct);
-                if (fromNl != null && IsNewer(fromNl.Version, CurrentVersion))
+                var fromMirror = await TryManifestAsync(manifest, ct);
+                if (fromMirror != null && IsNewer(fromMirror.Version, CurrentVersion))
                 {
-                    LogLine("update available via " + HostOf(manifest) + " " + fromNl.Version);
-                    return fromNl;
+                    LogLine("update available via " + HostOf(manifest) + " " + fromMirror.Version);
+                    return fromMirror;
                 }
             }
-            catch (Exception ex) { LogLine("check NL " + HostOf(manifest) + ": " + ex.Message); }
+            catch (Exception ex) { LogLine("check " + HostOf(manifest) + ": " + ex.Message); }
         }
 
         try

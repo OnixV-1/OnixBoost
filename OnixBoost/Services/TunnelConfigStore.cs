@@ -106,17 +106,18 @@ public static class TunnelConfigStore
         "2001:67c:4e8::/48",
     };
 
-    private static readonly string[] Hy2ServerCidrs = { "194.76.154.176/32" };
-    /// <summary>Canonical HY2 host (FR). Always pinned — stale dpi/core/*.json must not keep dead VSYS/NL2 IPs.</summary>
-    private const string Hy2ServerHost = "194.76.154.176";
+    // RU UDP DNAT → FR sing-box (3443 TG, 443 Discord/media). Direct FR UDP from RF is filtered.
+    private static readonly string[] Hy2ServerCidrs = { "185.159.82.67/32", "194.76.154.176/32" };
+    /// <summary>Canonical HY2 host (RU entry). Always pinned — stale dpi/core/*.json must not keep dead VSYS/NL2 IPs.</summary>
+    private const string Hy2ServerHost = "185.159.82.67";
 
     /// <summary>
     /// Split HY2 listen ports so Discord + Telegram TUNs do not share one QUIC inbound
     /// (same password + same port under load → voice mute / session flap).
+    /// RU relays: 3443→FR:3443 (TG), 4443→FR:443 (Discord/media).
     /// </summary>
-    // Same split as stable 2.9.4 on NL: Telegram → 3443, media/Discord → 443.
     private const int Hy2PortTelegram = 3443;
-    private const int Hy2PortDiscord = 443;
+    private const int Hy2PortDiscord = 4443;
 
     /// <summary>Telegram-only TUN: route_address CIDRs, no default-route dump.</summary>
     public static string MaterializeTelegram(string runtimeLeaf)
@@ -124,8 +125,126 @@ public static class TunnelConfigStore
         var json = ReadEmbeddedOrDisk("client-telegram.json");
         json = PinTunHy2Outbound(json, Hy2PortTelegram);
         json = HardenWindowsTelegramTun(json);
-        Logger.Info("telegram TUN: client-telegram.json (OnixBoostTG route_address)");
+        json = HardenLinuxTelegramTun(json);
+        // Never hijack system-wide DNS — TG uses process_name + ip_cidr + route_address.
+        json = StripDnsHijackRules(json);
+        Logger.Info("telegram TUN: client-telegram.json (OnixBoostTG, no DNS hijack)");
         return WriteRuntime(json, runtimeLeaf);
+    }
+
+    /// <summary>
+    /// Drop sing-box hijack-dns rules so Windows keeps using router/ISP DNS
+    /// (nslookup must not flip to 172.19.0.6 while only Telegram is boosted).
+    /// </summary>
+    private static string StripDnsHijackRules(string json)
+    {
+        try
+        {
+            var root = JsonNode.Parse(json);
+            if (root is null) return json;
+            var rules = root["route"]?["rules"]?.AsArray();
+            if (rules is null || rules.Count == 0) return json;
+
+            var kept = new JsonArray();
+            var removed = 0;
+            foreach (var r in rules)
+            {
+                if (r is null) continue;
+                var action = r["action"]?.GetValue<string>();
+                var proto = r["protocol"]?.GetValue<string>();
+                if (string.Equals(action, "hijack-dns", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(proto, "dns", StringComparison.OrdinalIgnoreCase))
+                {
+                    removed++;
+                    continue;
+                }
+                kept.Add(r);
+            }
+
+            if (removed == 0) return json;
+            root["route"]!["rules"] = kept;
+            Logger.Info($"telegram TUN: stripped {removed} DNS hijack rule(s)");
+            return root.ToJsonString(IndentedJson);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("StripDnsHijackRules: " + ex.Message);
+            return json;
+        }
+    }
+
+    /// <summary>
+    /// Linux Telegram TUN must be IPv4-only. Dual-stack (fdfe::) often fails with
+    /// "set ipv6 options: The parameter is incorrect" / configure tun — UI used to
+    /// mislabel that as fix-caps.sh while Discord Soft kept working.
+    /// Same approach as <see cref="HardenWindowsTelegramTun"/>.
+    /// </summary>
+    private static string HardenLinuxTelegramTun(string json)
+    {
+        if (!PlatformOs.IsLinux) return json;
+        try
+        {
+            var root = JsonNode.Parse(json);
+            if (root is null) return json;
+            var inbounds = root["inbounds"]?.AsArray();
+            if (inbounds is null) return json;
+            foreach (var n in inbounds)
+            {
+                if (n is not JsonObject tun) continue;
+                if (!string.Equals(tun["type"]?.GetValue<string>(), "tun", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                tun["stack"] = "system";
+                tun["strict_route"] = false;
+                tun["interface_name"] = "OnixBoostTG";
+                tun["address"] = new JsonArray("172.19.0.5/30");
+
+                if (tun["route_address"] is JsonArray routes)
+                {
+                    var v4 = new JsonArray();
+                    foreach (var r in routes)
+                    {
+                        var s = r?.GetValue<string>() ?? "";
+                        if (s.Length == 0 || s.Contains(':')) continue;
+                        v4.Add(s);
+                    }
+                    if (v4.Count > 0) tun["route_address"] = v4;
+                }
+
+                var excludes = new JsonArray();
+                foreach (var c in Hy2ServerCidrs) excludes.Add(c);
+                foreach (var c in SafeDiscordCidrs) excludes.Add(c);
+                excludes.Add("162.159.0.0/16");
+                foreach (var c in new[] { "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8" })
+                    excludes.Add(c);
+                tun["route_exclude_address"] = excludes;
+            }
+
+            if (root["route"]?["rules"] is JsonArray rules)
+            {
+                foreach (var rule in rules)
+                {
+                    if (rule is not JsonObject o) continue;
+                    if (o["ip_cidr"] is not JsonArray cidrs) continue;
+                    var v4 = new JsonArray();
+                    foreach (var c in cidrs)
+                    {
+                        var s = c?.GetValue<string>() ?? "";
+                        if (s.Length == 0 || s.Contains(':')) continue;
+                        v4.Add(s);
+                    }
+                    o["ip_cidr"] = v4;
+                }
+            }
+
+            Logger.Info("telegram TUN: Linux IPv4-only (avoid broken ipv6 tun options)");
+            return root.ToJsonString(IndentedJson);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("HardenLinuxTelegramTun: " + ex.Message);
+            return json;
+        }
     }
 
     /// <summary>
